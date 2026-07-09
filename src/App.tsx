@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { Shield, Users, ArrowRight, Link as LinkIcon, Copy, Gift, LogOut, Loader2, Wallet, UserCheck, Eye, MoreVertical, Coins, Upload, ArrowLeft, Plus, Maximize } from 'lucide-react';
+import { Shield, Users, ArrowRight, Link as LinkIcon, Copy, Gift, LogOut, Loader2, Wallet, UserCheck, Eye, MoreVertical, Coins, Upload, ArrowLeft, Plus, Maximize, Briefcase, MessageSquare, Search } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { GigsView } from './GigsView';
 import { supabase } from './lib/supabase';
 import { Session } from '@supabase/supabase-js';
 
-type Tab = 'admin' | 'referral' | 'wallet';
+type Tab = 'admin' | 'referral' | 'wallet' | 'gigs' | 'chat' | 'seekers';
 
 export default function App() {
   const [session, setSession] = useState<Session | null>(null);
@@ -72,7 +73,7 @@ export default function App() {
       <header className="bg-white border-b border-gray-200 sticky top-0 z-10">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex h-16 justify-between items-center">
-            <div className="flex space-x-8 h-full">
+            <div className="flex space-x-4 sm:space-x-8 h-full overflow-x-auto no-scrollbar flex-1 mr-4">
               <button
                 onClick={() => setActiveTab('admin')}
                 title="Admin"
@@ -106,6 +107,39 @@ export default function App() {
               >
                 <Wallet className="w-5 h-5" />
               </button>
+              <button
+                onClick={() => setActiveTab('gigs')}
+                title="GiGs"
+                className={`inline-flex items-center px-2 pt-1 border-b-2 text-sm font-medium transition-colors ${
+                  activeTab === 'gigs'
+                    ? 'border-indigo-500 text-indigo-600'
+                    : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700'
+                }`}
+              >
+                <Briefcase className="w-5 h-5" />
+              </button>
+              <button
+                onClick={() => setActiveTab('chat')}
+                title="Chat"
+                className={`inline-flex items-center px-2 pt-1 border-b-2 text-sm font-medium transition-colors ${
+                  activeTab === 'chat'
+                    ? 'border-pink-500 text-pink-600'
+                    : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700'
+                }`}
+              >
+                <MessageSquare className="w-5 h-5" />
+              </button>
+              <button
+                onClick={() => setActiveTab('seekers')}
+                title="Seekers"
+                className={`inline-flex items-center px-2 pt-1 border-b-2 text-sm font-medium transition-colors ${
+                  activeTab === 'seekers'
+                    ? 'border-orange-500 text-orange-600'
+                    : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700'
+                }`}
+              >
+                <Search className="w-5 h-5" />
+              </button>
             </div>
             <div>
               <button
@@ -126,6 +160,9 @@ export default function App() {
           {activeTab === 'admin' && <AdminView key="admin" onlineUsersCount={onlineUsersCount} />}
           {activeTab === 'referral' && <ReferralView key="referral" userId={session.user.id} />}
           {activeTab === 'wallet' && <WalletView key="wallet" userId={session.user.id} />}
+          {activeTab === 'gigs' && <GigsView key="gigs" />}
+          {activeTab === 'chat' && <ChatView key="chat" />}
+          {activeTab === 'seekers' && <SeekersView key="seekers" />}
         </AnimatePresence>
       </main>
     </div>
@@ -1550,6 +1587,54 @@ function WalletView({ userId }: { userId: string; key?: string }) {
               </ul>
             )}
           </div>
+        </div>
+      </div>
+    </motion.div>
+  );
+}
+
+function ChatView() {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: -10 }}
+      transition={{ duration: 0.2 }}
+      className="space-y-6"
+    >
+      <div>
+        <h1 className="text-2xl font-semibold text-gray-900">Chat</h1>
+        <p className="mt-1 text-sm text-gray-500">Connect with other users and agents.</p>
+      </div>
+      <div className="bg-white p-6 rounded-lg shadow border border-gray-100 flex items-center justify-center min-h-[300px]">
+        <div className="text-center">
+          <MessageSquare className="w-12 h-12 text-gray-300 mx-auto mb-4" />
+          <h3 className="text-lg font-medium text-gray-900">Chat Coming Soon</h3>
+          <p className="text-gray-500 mt-2">This feature is currently under development.</p>
+        </div>
+      </div>
+    </motion.div>
+  );
+}
+
+function SeekersView() {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: -10 }}
+      transition={{ duration: 0.2 }}
+      className="space-y-6"
+    >
+      <div>
+        <h1 className="text-2xl font-semibold text-gray-900">Seekers</h1>
+        <p className="mt-1 text-sm text-gray-500">Discover and connect with active seekers.</p>
+      </div>
+      <div className="bg-white p-6 rounded-lg shadow border border-gray-100 flex items-center justify-center min-h-[300px]">
+        <div className="text-center">
+          <Search className="w-12 h-12 text-gray-300 mx-auto mb-4" />
+          <h3 className="text-lg font-medium text-gray-900">Seekers Coming Soon</h3>
+          <p className="text-gray-500 mt-2">This feature is currently under development.</p>
         </div>
       </div>
     </motion.div>
