@@ -8,6 +8,9 @@ import {
   Smile, 
   MessageSquare, 
   User, 
+  Users,
+  Bell,
+  Search,
   Check, 
   CheckCheck,
   Zap,
@@ -25,6 +28,7 @@ import {
   sendLocalMessage,
   Message
 } from '../lib/chat';
+import { supabase } from '../lib/supabase';
 
 interface ChatViewProps {
   userId: string;
@@ -38,11 +42,19 @@ export function ChatView({ userId, activeContactId: propActiveContactId, setActi
   const activeContactId = propActiveContactId !== undefined ? propActiveContactId : internalActiveContactId;
   const setActiveContactId = propSetActiveContactId || setInternalActiveContactId;
 
-  const [subTab, setSubTab] = useState<'Contacts' | 'Requests' | 'Discover'>('Contacts');
+  const [subTab, setSubTab] = useState<'Chats' | 'Contacts' | 'Requests' | 'Discover'>('Chats');
   const [contacts, setContacts] = useState<any[]>([]);
+  const [activeProfile, setActiveProfile] = useState<any>(null);
   const [requests, setRequests] = useState<any[]>([]);
   const [users, setUsers] = useState<Profile[]>([]);
   const [loading, setLoading] = useState(false);
+  const [lastActivity, setLastActivity] = useState(Date.now());
+  const [showProfileDetails, setShowProfileDetails] = useState<Profile | null>(null);
+
+  useEffect(() => {
+    const interval = setInterval(() => setLastActivity(Date.now()), 2000);
+    return () => clearInterval(interval);
+  }, []);
   
   // Message input state
   const [messageText, setMessageText] = useState('');
@@ -53,7 +65,7 @@ export function ChatView({ userId, activeContactId: propActiveContactId, setActi
   const loadData = async () => {
     setLoading(true);
     try {
-      if (subTab === 'Contacts') {
+      if (subTab === 'Contacts' || subTab === 'Chats') {
         const data = await fetchContacts(userId);
         setContacts(data || []);
       } else if (subTab === 'Requests') {
@@ -78,7 +90,54 @@ export function ChatView({ userId, activeContactId: propActiveContactId, setActi
 
   useEffect(() => {
     loadData();
+    // Poll for data to keep lists fresh (new friends, new requests, status changes)
+    const interval = setInterval(loadData, 5000);
+    return () => clearInterval(interval);
   }, [subTab, userId]);
+
+  // Sync active profile when contacts or activeContactId change
+  useEffect(() => {
+    if (!activeContactId) {
+      setActiveProfile(null);
+      return;
+    }
+
+    const found = contacts.find(c => c.friend_id === activeContactId);
+    if (found) {
+      setActiveProfile(found.profiles);
+    } else {
+      // If not in contacts yet (e.g. newly added), try to fetch it
+      const fetchNewProfile = async () => {
+        try {
+          const { data } = await supabase
+            .from('profiles')
+            .select('id, name, email, status')
+            .eq('id', activeContactId)
+            .single();
+          
+          if (data) {
+            setActiveProfile(data);
+          } else {
+            // Fallback for mock users
+            setActiveProfile({
+              id: activeContactId,
+              name: activeContactId.startsWith('user-') ? activeContactId.replace('user-', '').split('-')[0].charAt(0).toUpperCase() + activeContactId.replace('user-', '').split('-')[0].slice(1) : 'User',
+              email: `${activeContactId.substring(0, 5)}@example.com`,
+              status: 'Active'
+            });
+          }
+        } catch (e) {
+          console.warn('Could not fetch active profile, using fallback:', e);
+          setActiveProfile({
+            id: activeContactId,
+            name: 'User',
+            status: 'Active'
+          });
+        }
+      };
+      fetchNewProfile();
+    }
+  }, [activeContactId, contacts]);
 
   // Handle active message loading & polling
   useEffect(() => {
@@ -164,8 +223,6 @@ export function ChatView({ userId, activeContactId: propActiveContactId, setActi
     }
   };
 
-  const selectedContact = contacts.find(c => c.friend_id === activeContactId);
-
   return (
     <div className="flex flex-col flex-1 min-h-0 h-full">
       <motion.div
@@ -177,22 +234,28 @@ export function ChatView({ userId, activeContactId: propActiveContactId, setActi
       <div className={`flex flex-col h-full border-r border-gray-100 bg-gray-50/20 ${activeContactId ? 'hidden md:flex' : 'flex'}`}>
         {/* Navigation Sub-Tabs */}
         <div className="flex border-b border-gray-100 bg-gray-50/50">
-          {(['Contacts', 'Requests', 'Discover'] as const).map((tab) => (
+          {(['Chats', 'Contacts', 'Requests', 'Discover'] as const).map((tab) => (
             <button
               key={tab}
               onClick={() => {
                 setSubTab(tab);
                 setActiveContactId(null); // Clear selected conversation when moving tabs
               }}
-              className={`flex-1 p-4 text-xs sm:text-sm font-semibold transition-all relative ${
+              className={`flex-1 p-3.5 text-[10px] sm:text-[11px] font-bold uppercase tracking-wider transition-all relative flex flex-col items-center justify-center gap-1 ${
                 subTab === tab 
-                  ? 'text-indigo-600 border-b-2 border-indigo-600 bg-white font-bold' 
+                  ? 'text-indigo-600 border-b-2 border-indigo-600 bg-white' 
                   : 'text-gray-500 hover:text-gray-800 hover:bg-gray-50'
               }`}
             >
-              {tab}
+              {tab === 'Chats' && <MessageSquare className="w-4 h-4" />}
+              {tab === 'Contacts' && <Users className="w-4 h-4" />}
+              {tab === 'Requests' && <Bell className="w-4 h-4" />}
+              {tab === 'Discover' && <Search className="w-4 h-4" />}
+              
+              <span className="mt-0.5">{tab}</span>
+              
               {tab === 'Requests' && requests.length > 0 && (
-                <span className="ml-1.5 bg-rose-500 text-white text-[10px] px-1.5 py-0.5 rounded-full font-bold">
+                <span className="absolute top-2 right-2 bg-rose-500 text-white text-[9px] px-1.5 py-0.5 rounded-full font-bold">
                   {requests.length}
                 </span>
               )}
@@ -209,11 +272,103 @@ export function ChatView({ userId, activeContactId: propActiveContactId, setActi
             </div>
           )}
           
+          {!loading && subTab === 'Chats' && (
+            <div className="space-y-2.5">
+              {contacts
+                .map(c => ({
+                  ...c,
+                  latestMsg: getLocalMessages(userId, c.friend_id).pop()
+                }))
+                .filter(c => c.latestMsg !== undefined) // Only show active chats in 'Chats' tab
+                .sort((a, b) => {
+                  const timeA = a.latestMsg ? new Date(a.latestMsg.created_at).getTime() : 0;
+                  const timeB = b.latestMsg ? new Date(b.latestMsg.created_at).getTime() : 0;
+                  return timeB - timeA;
+                })
+                .map((c) => {
+                  const isSelected = c.friend_id === activeContactId;
+                  const latestMsg = c.latestMsg;
+                  const isIncoming = latestMsg && latestMsg.sender_id !== userId;
+                  
+                  return (
+                    <button
+                      key={c.friend_id}
+                      onClick={() => setActiveContactId(c.friend_id)}
+                      className={`w-full text-left p-3.5 rounded-xl transition-all flex items-center justify-between border ${
+                        isSelected 
+                          ? 'bg-indigo-50 border-indigo-200 shadow-sm' 
+                          : 'bg-white hover:bg-gray-50 border-gray-100'
+                      }`}
+                    >
+                      <div className="flex items-center space-x-3 min-w-0">
+                        {c.profiles?.avatar_url ? (
+                          <img 
+                            src={c.profiles.avatar_url} 
+                            alt={c.profiles.name} 
+                            className="w-10 h-10 rounded-full object-cover border border-indigo-50"
+                            referrerPolicy="no-referrer"
+                          />
+                        ) : (
+                          <div className="w-10 h-10 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center font-bold text-sm shrink-0 border border-indigo-50">
+                            {c.profiles?.name?.charAt(0).toUpperCase() || 'U'}
+                          </div>
+                        )}
+                        <div className="min-w-0">
+                          <div className="flex items-center space-x-1.5">
+                            <p className={`font-bold text-xs sm:text-sm truncate ${isSelected ? 'text-indigo-900' : 'text-gray-900'}`}>
+                              {c.profiles?.name || 'User'}
+                            </p>
+                            {c.profiles?.status === 'Verified' && (
+                              <span className="inline-flex items-center shrink-0">
+                                <ShieldCheck className="w-3.5 h-3.5 text-green-600 fill-green-50" />
+                              </span>
+                            )}
+                          </div>
+                          <p className={`text-[11px] truncate mt-0.5 ${latestMsg ? (isSelected ? 'text-indigo-600' : 'text-gray-500') : 'text-gray-400'}`}>
+                            {latestMsg ? (
+                              <>
+                                <span className="font-semibold text-[10px] uppercase tracking-wider mr-1">
+                                  {isIncoming ? 'Them:' : 'You:'}
+                                </span>
+                                {latestMsg.content}
+                              </>
+                            ) : (
+                              c.profiles?.email || 'Active connection'
+                            )}
+                          </p>
+                        </div>
+                      </div>
+                      {latestMsg && (
+                        <div className="flex flex-col items-end space-y-1.5 shrink-0 ml-2">
+                          <span className="text-[9px] text-gray-400 font-bold uppercase whitespace-nowrap">
+                            {new Date(latestMsg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          </span>
+                          {!isSelected && isIncoming && (
+                            <div className="w-2 h-2 rounded-full bg-indigo-600 animate-pulse shadow-sm shadow-indigo-200" />
+                          )}
+                        </div>
+                      )}
+                    </button>
+                  );
+                })}
+              {contacts.filter(c => getLocalMessages(userId, c.friend_id).length > 0).length === 0 && (
+                <div className="text-center py-12">
+                  <div className="w-12 h-12 bg-gray-50 rounded-full flex items-center justify-center mx-auto mb-3">
+                    <MessageSquare className="w-6 h-6 text-gray-300" />
+                  </div>
+                  <p className="text-gray-400 text-xs sm:text-sm mb-3">No active chats.</p>
+                  <button onClick={() => setSubTab('Contacts')} className="text-indigo-600 text-xs font-bold hover:underline uppercase tracking-wider">
+                    Browse Contacts
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
           {!loading && subTab === 'Contacts' && (
             <div className="space-y-2.5">
               {contacts.map((c) => {
                 const isSelected = c.friend_id === activeContactId;
-                const latestMsg = getLocalMessages(userId, c.friend_id).pop();
                 return (
                   <button
                     key={c.friend_id}
@@ -225,12 +380,21 @@ export function ChatView({ userId, activeContactId: propActiveContactId, setActi
                     }`}
                   >
                     <div className="flex items-center space-x-3 min-w-0">
-                      <div className="w-10 h-10 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center font-bold text-sm shrink-0">
-                        {c.profiles?.name?.charAt(0).toUpperCase() || 'U'}
-                      </div>
+                      {c.profiles?.avatar_url ? (
+                        <img 
+                          src={c.profiles.avatar_url} 
+                          alt={c.profiles.name} 
+                          className="w-10 h-10 rounded-full object-cover"
+                          referrerPolicy="no-referrer"
+                        />
+                      ) : (
+                        <div className="w-10 h-10 rounded-full bg-gray-100 text-gray-700 flex items-center justify-center font-bold text-sm shrink-0">
+                          {c.profiles?.name?.charAt(0).toUpperCase() || 'U'}
+                        </div>
+                      )}
                       <div className="min-w-0">
-                        <div className="flex items-center space-x-1">
-                          <p className={`font-semibold text-xs sm:text-sm truncate ${isSelected ? 'text-indigo-900' : 'text-gray-900'}`}>
+                        <div className="flex items-center space-x-1.5">
+                          <p className={`font-bold text-xs sm:text-sm truncate ${isSelected ? 'text-indigo-900' : 'text-gray-900'}`}>
                             {c.profiles?.name || 'User'}
                           </p>
                           {c.profiles?.status === 'Verified' && (
@@ -240,15 +404,10 @@ export function ChatView({ userId, activeContactId: propActiveContactId, setActi
                           )}
                         </div>
                         <p className="text-[11px] text-gray-400 truncate mt-0.5">
-                          {latestMsg ? latestMsg.content : c.profiles?.email || 'Active connection'}
+                          {c.profiles?.email || 'Active connection'}
                         </p>
                       </div>
                     </div>
-                    {latestMsg && (
-                      <span className="text-[9px] text-gray-400 shrink-0 whitespace-nowrap self-start mt-1">
-                        {new Date(latestMsg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                      </span>
-                    )}
                   </button>
                 );
               })}
@@ -268,9 +427,18 @@ export function ChatView({ userId, activeContactId: propActiveContactId, setActi
               {requests.map((r) => (
                 <div key={r.id} className="p-3.5 bg-white rounded-xl flex flex-col space-y-3 border border-gray-100 shadow-sm">
                   <div className="flex items-center space-x-2.5">
-                    <div className="w-9 h-9 rounded-full bg-green-100 text-green-700 flex items-center justify-center font-bold text-xs shrink-0">
-                      {r.profiles?.name?.charAt(0).toUpperCase() || 'R'}
-                    </div>
+                    {r.profiles?.avatar_url ? (
+                      <img 
+                        src={r.profiles.avatar_url} 
+                        alt={r.profiles.name} 
+                        className="w-9 h-9 rounded-full object-cover shrink-0"
+                        referrerPolicy="no-referrer"
+                      />
+                    ) : (
+                      <div className="w-9 h-9 rounded-full bg-green-100 text-green-700 flex items-center justify-center font-bold text-xs shrink-0">
+                        {r.profiles?.name?.charAt(0).toUpperCase() || 'R'}
+                      </div>
+                    )}
                     <div className="min-w-0">
                       <p className="font-semibold text-xs sm:text-sm text-gray-900 truncate">{r.profiles?.name || 'Incoming Friend Request'}</p>
                       <p className="text-[10px] text-gray-400 truncate">{r.profiles?.email}</p>
@@ -305,12 +473,30 @@ export function ChatView({ userId, activeContactId: propActiveContactId, setActi
               {users.map((u) => (
                 <div key={u.id} className="p-3.5 bg-white rounded-xl flex items-center justify-between border border-gray-100 shadow-sm">
                   <div className="flex items-center space-x-2.5 min-w-0">
-                    <div className="w-9 h-9 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center font-bold text-xs shrink-0">
-                      {u.name?.charAt(0).toUpperCase() || 'U'}
-                    </div>
+                    {u.avatar_url ? (
+                      <img 
+                        src={u.avatar_url} 
+                        alt={u.name} 
+                        className="w-9 h-9 rounded-full object-cover shrink-0 cursor-pointer"
+                        referrerPolicy="no-referrer"
+                        onClick={() => setShowProfileDetails(u)}
+                      />
+                    ) : (
+                      <div 
+                        className="w-9 h-9 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center font-bold text-xs shrink-0 cursor-pointer"
+                        onClick={() => setShowProfileDetails(u)}
+                      >
+                        {u.name?.charAt(0).toUpperCase() || 'U'}
+                      </div>
+                    )}
                     <div className="min-w-0">
                       <div className="flex items-center space-x-1.5 flex-wrap gap-y-0.5">
-                        <p className="font-semibold text-xs sm:text-sm text-gray-900 truncate">{u.name || 'User'}</p>
+                        <p 
+                          className="font-semibold text-xs sm:text-sm text-gray-900 truncate cursor-pointer hover:text-indigo-600"
+                          onClick={() => setShowProfileDetails(u)}
+                        >
+                          {u.name || 'User'}
+                        </p>
                         {u.status === 'Verified' ? (
                           <span className="inline-flex items-center space-x-0.5 px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-100 shrink-0" title="Verified Member">
                             <ShieldCheck className="w-3 h-3 text-emerald-600 shrink-0" />
@@ -345,7 +531,7 @@ export function ChatView({ userId, activeContactId: propActiveContactId, setActi
 
       {/* RIGHT COLUMN: ACTIVE CONVERSATION */}
       <div className={`col-span-2 flex flex-col h-full bg-white relative ${activeContactId ? 'flex' : 'hidden md:flex'}`}>
-        {selectedContact ? (
+        {activeProfile ? (
           <>
             {/* Conversation Header */}
             <div className="flex items-center justify-between px-4 sm:px-6 py-4 border-b border-gray-100 bg-white">
@@ -357,22 +543,40 @@ export function ChatView({ userId, activeContactId: propActiveContactId, setActi
                 >
                   <ArrowLeft className="w-5 h-5" />
                 </button>
-                <div className="w-10 h-10 rounded-full bg-indigo-600 text-white flex items-center justify-center font-bold text-sm shrink-0 shadow-sm">
-                  {selectedContact.profiles?.name?.charAt(0).toUpperCase() || 'C'}
+                <div 
+                  className="relative cursor-pointer group"
+                  onClick={() => setShowProfileDetails(activeProfile)}
+                >
+                  {activeProfile.avatar_url ? (
+                    <img 
+                      src={activeProfile.avatar_url} 
+                      alt={activeProfile.name} 
+                      className="w-10 h-10 rounded-full object-cover shadow-sm group-hover:ring-2 group-hover:ring-indigo-500 transition-all"
+                      referrerPolicy="no-referrer"
+                    />
+                  ) : (
+                    <div className="w-10 h-10 rounded-full bg-indigo-600 text-white flex items-center justify-center font-bold text-sm shrink-0 shadow-sm group-hover:bg-indigo-700 transition-all">
+                      {activeProfile.name?.charAt(0).toUpperCase() || 'C'}
+                    </div>
+                  )}
+                  <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-green-500 border-2 border-white rounded-full"></div>
                 </div>
-                <div className="min-w-0">
+                <div 
+                  className="min-w-0 cursor-pointer"
+                  onClick={() => setShowProfileDetails(activeProfile)}
+                >
                   <div className="flex items-center space-x-1.5">
-                    <h4 className="font-bold text-sm sm:text-base text-gray-900 truncate">
-                      {selectedContact.profiles?.name || 'Contact'}
+                    <h4 className="font-bold text-sm sm:text-base text-gray-900 truncate group-hover:text-indigo-600">
+                      {activeProfile.name || 'Contact'}
                     </h4>
-                    {selectedContact.profiles?.status === 'Verified' && (
+                    {activeProfile.status === 'Verified' && (
                       <span className="inline-flex items-center">
                         <ShieldCheck className="w-4 h-4 text-green-600 fill-green-50" />
                       </span>
                     )}
                   </div>
                   <p className="text-[11px] text-gray-400 truncate">
-                    {selectedContact.profiles?.email || 'Active connection'}
+                    {activeProfile.email || 'Active connection'}
                   </p>
                 </div>
               </div>
@@ -490,6 +694,88 @@ export function ChatView({ userId, activeContactId: propActiveContactId, setActi
         )}
       </div>
       </motion.div>
+
+      {/* Profile Details Modal */}
+      <AnimatePresence>
+        {showProfileDetails && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 20 }}
+              className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden relative"
+            >
+              <button 
+                onClick={() => setShowProfileDetails(null)}
+                className="absolute top-4 right-4 p-2 bg-gray-100 hover:bg-gray-200 text-gray-500 rounded-full transition-colors z-10"
+              >
+                <ArrowLeft className="w-5 h-5 rotate-180" />
+              </button>
+
+              <div className="h-32 bg-gradient-to-r from-indigo-500 to-purple-600 w-full relative">
+                <div className="absolute -bottom-12 left-1/2 -translate-x-1/2">
+                  {showProfileDetails.avatar_url ? (
+                    <img 
+                      src={showProfileDetails.avatar_url} 
+                      alt={showProfileDetails.name} 
+                      className="w-24 h-24 rounded-3xl object-cover border-4 border-white shadow-lg"
+                      referrerPolicy="no-referrer"
+                    />
+                  ) : (
+                    <div className="w-24 h-24 rounded-3xl bg-indigo-100 text-indigo-700 flex items-center justify-center text-3xl font-bold border-4 border-white shadow-lg">
+                      {showProfileDetails.name?.charAt(0).toUpperCase() || 'U'}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="pt-16 pb-8 px-8 text-center">
+                <div className="flex items-center justify-center space-x-2 mb-1">
+                  <h3 className="text-2xl font-black text-gray-900 tracking-tight">
+                    {showProfileDetails.name}
+                  </h3>
+                  {showProfileDetails.status === 'Verified' && (
+                    <ShieldCheck className="w-6 h-6 text-green-600" />
+                  )}
+                </div>
+                <p className="text-gray-500 text-sm font-medium mb-6">
+                  {showProfileDetails.email}
+                </p>
+
+                <div className="bg-gray-50 rounded-2xl p-6 text-left mb-6">
+                  <h4 className="text-[10px] font-bold text-indigo-600 uppercase tracking-widest mb-2">About</h4>
+                  <p className="text-gray-700 text-sm leading-relaxed">
+                    {showProfileDetails.bio || "No bio provided yet. This user is part of our verified community and is ready to help!"}
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="bg-white border border-gray-100 rounded-2xl p-4 shadow-sm">
+                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Member Type</p>
+                    <p className="text-sm font-bold text-gray-900">
+                      {showProfileDetails.status === 'Verified' ? 'Professional' : 'Standard'}
+                    </p>
+                  </div>
+                  <div className="bg-white border border-gray-100 rounded-2xl p-4 shadow-sm">
+                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Status</p>
+                    <div className="flex items-center space-x-1.5 justify-center">
+                      <div className="w-2 h-2 rounded-full bg-green-500"></div>
+                      <p className="text-sm font-bold text-gray-900">Online</p>
+                    </div>
+                  </div>
+                </div>
+
+                <button 
+                  onClick={() => setShowProfileDetails(null)}
+                  className="mt-8 w-full bg-indigo-600 hover:bg-indigo-700 text-white font-black py-4 rounded-2xl transition-all shadow-lg shadow-indigo-200 active:scale-95"
+                >
+                  Back to Chat
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

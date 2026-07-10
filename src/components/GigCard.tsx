@@ -45,6 +45,30 @@ export function GigCard({ gig, user, onEdit, onDelete, onViewImage, onApply }: G
         <h3 className="text-sm font-semibold text-gray-900 line-clamp-1 mb-1">{gig.title}</h3>
         <p className="text-xs text-gray-500 line-clamp-2 mb-3 flex-1">{gig.description}</p>
         
+        {/* Creator Info */}
+        <div className="flex items-center space-x-2 mb-3 p-2 bg-gray-50 rounded-xl border border-gray-100">
+          {gig.profiles?.avatar_url ? (
+            <img 
+              src={gig.profiles.avatar_url} 
+              alt={gig.profiles.name} 
+              className="w-8 h-8 rounded-full object-cover border border-white shadow-sm"
+              referrerPolicy="no-referrer"
+            />
+          ) : (
+            <div className="w-8 h-8 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center font-bold text-[10px] shrink-0 border border-white shadow-sm">
+              {gig.profiles?.name?.charAt(0).toUpperCase() || 'U'}
+            </div>
+          )}
+          <div className="min-w-0">
+            <p className="text-[10px] font-bold text-gray-900 truncate">
+              {gig.profiles?.name || 'Anonymous User'}
+            </p>
+            <p className="text-[9px] text-gray-400 truncate">
+              {gig.profiles?.status === 'Verified' ? 'Verified Professional' : 'Active Member'}
+            </p>
+          </div>
+        </div>
+
         <div className="flex items-center justify-between text-[10px] text-gray-500 mb-3 gap-2">
           <div className="flex items-center gap-1">
             <MapPin className="w-3 h-3" />

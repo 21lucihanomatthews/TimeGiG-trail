@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Shield, Users, ArrowRight, Link as LinkIcon, Copy, Gift, LogOut, Loader2, Wallet, UserCheck, Eye, MoreVertical, Coins, Upload, ArrowLeft, Plus, Maximize, Briefcase, MessageSquare, Search, User, Edit2, Check, ShieldCheck, Bell, MapPin, Phone, Globe, Sparkles, Trash2, Camera, Award, Image as ImageIcon, Lock } from 'lucide-react';
+import { Shield, Users, ArrowRight, Link as LinkIcon, Copy, Gift, LogOut, Loader2, Wallet, UserCheck, Eye, MoreVertical, Coins, Upload, ArrowLeft, Plus, Maximize, Briefcase, MessageSquare, Search, User, Edit2, Check, ShieldCheck, Bell, MapPin, Phone, Globe, Sparkles, Trash2, Camera, Award, Image as ImageIcon, Lock, X, ChevronRight } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { GigsView } from './GigsView';
 import { SeekersView } from './SeekersView';
@@ -32,14 +32,15 @@ export default function App() {
     pin_code?: string;
   } | null>(null);
   const [showMenuDropdown, setShowMenuDropdown] = useState(false);
-  const [showNotificationsDropdown, setShowNotificationsDropdown] = useState(false);
-  const [notifications, setNotifications] = useState<Array<{ id: string; title: string; body: string; time: string; read: boolean }>>([
+  const [showNotificationsModal, setShowNotificationsModal] = useState(false);
+  const [notifications, setNotifications] = useState<Array<{ id: string; title: string; body: string; time: string; read: boolean; sourceTab?: Tab }>>([
     {
       id: '1',
       title: 'Welcome to the Platform!',
       body: 'Get started by creating your gig or exploring active seekers in your area.',
       time: 'Just now',
       read: false,
+      sourceTab: 'gigs'
     },
     {
       id: '2',
@@ -47,6 +48,7 @@ export default function App() {
       body: 'Your account is active. To unlock referral rewards, verify your profile with a wallet top-up!',
       time: '2 hours ago',
       read: false,
+      sourceTab: 'referral'
     },
     {
       id: '3',
@@ -54,6 +56,7 @@ export default function App() {
       body: 'You can now coordinate terms and details directly inside the brand-new Chat tab.',
       time: '1 day ago',
       read: true,
+      sourceTab: 'chat'
     }
   ]);
   const [showProfileModal, setShowProfileModal] = useState(false);
@@ -194,7 +197,7 @@ export default function App() {
         }
       }
     } catch (e: any) {
-      console.error('Error fetching profile:', e);
+      console.warn('Profile fetch error, falling back to local/metadata:', e?.message || e);
       const localExtra = localStorage.getItem(`profile_extra_${session.user.id}`);
       const parsedLocal = localExtra ? JSON.parse(localExtra) : {};
       const fallbackName = parsedLocal.name || session.user.user_metadata?.display_name || (session.user.email ? session.user.email.split('@')[0] : 'User');
@@ -459,21 +462,24 @@ export default function App() {
   };
 
   const handleDirectToChat = async (contactId: string, starterMessage: string) => {
-    if (!session?.user?.id) return;
+    if (!session?.user?.id) {
+      console.warn('Cannot direct to chat: No active session');
+      return;
+    }
     const currentUserId = session.user.id;
+    console.log('Directing to chat with:', contactId);
     try {
+      // Switch tab first for perceived speed
+      setActiveTab('chat');
+      setActiveContactId(contactId);
+      
+      // Ensure friendship and message are handled
       await ensureFriendship(currentUserId, contactId);
       sendLocalMessage(currentUserId, contactId, starterMessage);
-      setActiveContactId(contactId);
-      setActiveTab('chat');
+      
+      console.log('Successfully initialized chat with:', contactId);
     } catch (err: any) {
-      console.error('Detailed Error routing to chat:', {
-        message: err?.message || 'Unknown error',
-        code: err?.code || 'N/A',
-        details: err?.details || '',
-        hint: err?.hint || '',
-        fullError: err
-      });
+      console.error('Detailed Error routing to chat:', err);
     }
   };
 
@@ -637,7 +643,7 @@ export default function App() {
               <div className="relative">
                 <button
                   onClick={() => {
-                    setShowNotificationsDropdown(!showNotificationsDropdown);
+                    setShowNotificationsModal(!showNotificationsModal);
                     setShowMenuDropdown(false);
                   }}
                   className="p-2 rounded-xl text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-all duration-300 focus:outline-none flex items-center justify-center shrink-0 relative"
@@ -650,60 +656,102 @@ export default function App() {
                 </button>
 
                 <AnimatePresence>
-                  {showNotificationsDropdown && (
-                    <>
+                  {showNotificationsModal && (
+                    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
                       {/* Backdrop to close */}
-                      <div 
-                        className="fixed inset-0 z-20" 
-                        onClick={() => setShowNotificationsDropdown(false)} 
+                      <motion.div 
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        className="absolute inset-0 bg-black/40 backdrop-blur-sm" 
+                        onClick={() => setShowNotificationsModal(false)} 
                       />
                       
                       <motion.div
-                        initial={{ opacity: 0, scale: 0.95, y: 10 }}
+                        initial={{ opacity: 0, scale: 0.9, y: 20 }}
                         animate={{ opacity: 1, scale: 1, y: 0 }}
-                        exit={{ opacity: 0, scale: 0.95, y: 10 }}
-                        className="absolute right-0 mt-2 w-80 bg-white rounded-xl shadow-xl border border-gray-100 z-30 overflow-hidden text-gray-900"
+                        exit={{ opacity: 0, scale: 0.9, y: 20 }}
+                        className="relative w-full max-w-lg bg-white rounded-2xl shadow-2xl overflow-hidden text-gray-900 border border-gray-100"
                       >
-                        <div className="p-3.5 border-b border-gray-100 flex items-center justify-between">
-                          <span className="text-xs font-bold text-gray-900 uppercase tracking-wider">Notifications</span>
-                          {notifications.some(n => !n.read) && (
+                        <div className="p-5 border-b border-gray-100 flex items-center justify-between bg-gray-50/50">
+                          <div className="flex items-center space-x-3">
+                            <div className="p-2 bg-indigo-100 rounded-lg">
+                              <Bell className="w-5 h-5 text-indigo-600" />
+                            </div>
+                            <span className="text-lg font-bold text-gray-900 tracking-tight">Notification Center</span>
+                          </div>
+                          <div className="flex items-center space-x-3">
+                            {notifications.some(n => !n.read) && (
+                              <button 
+                                onClick={() => {
+                                  setNotifications(notifications.map(n => ({ ...n, read: true })));
+                                }}
+                                className="text-xs font-bold text-indigo-600 hover:text-indigo-700 transition-colors"
+                              >
+                                Mark all as read
+                              </button>
+                            )}
                             <button 
-                              onClick={() => {
-                                setNotifications(notifications.map(n => ({ ...n, read: true })));
-                              }}
-                              className="text-[10px] font-semibold text-indigo-600 hover:underline hover:text-indigo-700"
+                              onClick={() => setShowNotificationsModal(false)}
+                              className="p-1.5 hover:bg-gray-200 rounded-lg transition-colors text-gray-400 hover:text-gray-600"
                             >
-                              Mark all as read
+                              <X className="w-5 h-5" />
                             </button>
-                          )}
+                          </div>
                         </div>
-                        <div className="max-h-80 overflow-y-auto divide-y divide-gray-50">
+
+                        <div className="max-h-[60vh] overflow-y-auto p-2 space-y-1">
                           {notifications.map((n) => (
                             <div 
                               key={n.id} 
                               onClick={() => {
                                 setNotifications(notifications.map(notif => notif.id === n.id ? { ...notif, read: true } : notif));
+                                if (n.sourceTab) {
+                                  setActiveTab(n.sourceTab);
+                                  setShowNotificationsModal(false);
+                                }
                               }}
-                              className={`p-3.5 hover:bg-gray-50/50 cursor-pointer transition-colors flex gap-2.5 items-start ${!n.read ? 'bg-indigo-50/30' : ''}`}
+                              className={`group p-4 rounded-xl hover:bg-gray-50 cursor-pointer transition-all border border-transparent hover:border-gray-100 flex gap-4 items-start ${!n.read ? 'bg-indigo-50/40 border-indigo-50 shadow-sm' : ''}`}
                             >
-                              <div className="mt-1 shrink-0">
-                                <div className={`w-2 h-2 rounded-full ${!n.read ? 'bg-indigo-600' : 'bg-transparent'}`} />
+                              <div className="mt-1 shrink-0 relative">
+                                <div className={`w-3 h-3 rounded-full border-2 border-white ${!n.read ? 'bg-indigo-600 ring-4 ring-indigo-50' : 'bg-gray-200 group-hover:bg-gray-300'}`} />
                               </div>
                               <div className="flex-1 min-w-0">
-                                <p className={`text-xs text-gray-900 truncate ${!n.read ? 'font-bold' : 'font-medium'}`}>{n.title}</p>
-                                <p className="text-[11px] text-gray-500 mt-0.5 leading-relaxed break-words">{n.body}</p>
-                                <span className="text-[9px] text-gray-400 font-semibold block mt-1">{n.time}</span>
+                                <div className="flex justify-between items-start mb-1">
+                                  <p className={`text-sm text-gray-900 leading-tight ${!n.read ? 'font-bold' : 'font-medium'}`}>{n.title}</p>
+                                  <span className="text-[10px] text-gray-400 font-bold uppercase shrink-0 ml-4">{n.time}</span>
+                                </div>
+                                <p className="text-xs text-gray-600 leading-relaxed break-words">{n.body}</p>
+                                {n.sourceTab && (
+                                  <div className="mt-3 flex items-center text-xs font-bold text-indigo-600 group-hover:translate-x-1 transition-transform">
+                                    <span>Go to {n.sourceTab}</span>
+                                    <ChevronRight className="w-3 h-3 ml-1" />
+                                  </div>
+                                )}
                               </div>
                             </div>
                           ))}
                           {notifications.length === 0 && (
-                            <div className="p-6 text-center text-gray-400 text-xs">
-                              No notifications yet.
+                            <div className="py-12 text-center">
+                              <div className="w-16 h-16 bg-gray-50 rounded-full flex items-center justify-center mx-auto mb-4">
+                                <Bell className="w-8 h-8 text-gray-300" />
+                              </div>
+                              <p className="text-sm font-bold text-gray-900">No new notifications</p>
+                              <p className="text-xs text-gray-500 mt-1">We'll let you know when something happens.</p>
                             </div>
                           )}
                         </div>
+                        
+                        <div className="p-4 border-t border-gray-100 bg-gray-50/30 text-center">
+                          <button 
+                            onClick={() => setShowNotificationsModal(false)}
+                            className="text-xs font-bold text-gray-500 hover:text-gray-700 transition-colors uppercase tracking-wider"
+                          >
+                            Close Board
+                          </button>
+                        </div>
                       </motion.div>
-                    </>
+                    </div>
                   )}
                 </AnimatePresence>
               </div>
@@ -713,7 +761,7 @@ export default function App() {
                 <button
                   onClick={() => {
                     setShowMenuDropdown(!showMenuDropdown);
-                    setShowNotificationsDropdown(false);
+                    setShowNotificationsModal(false);
                   }}
                   className="flex items-center space-x-1.5 p-1 pr-2 rounded-full border border-gray-100 hover:border-gray-200 bg-white hover:bg-gray-50 transition-all duration-300 focus:outline-none shrink-0 shadow-xs"
                   title="Account Menu"
@@ -2040,9 +2088,18 @@ function AdminView({ onlineUsersCount = 0 }: { onlineUsersCount?: number; key?: 
                     <tr key={idx} className="hover:bg-gray-50">
                       <td className="px-6 py-4 whitespace-nowrap">
                         <div className="flex items-center">
-                          <div className="h-10 w-10 rounded-full bg-gray-200 flex items-center justify-center text-gray-500 font-medium uppercase">
-                            {user.name ? user.name.charAt(0) : user.email?.charAt(0) || '?'}
-                          </div>
+                          {user.avatar_url ? (
+                            <img 
+                              src={user.avatar_url} 
+                              alt={user.name} 
+                              className="h-10 w-10 rounded-full object-cover"
+                              referrerPolicy="no-referrer"
+                            />
+                          ) : (
+                            <div className="h-10 w-10 rounded-full bg-gray-200 flex items-center justify-center text-gray-500 font-medium uppercase">
+                              {user.name ? user.name.charAt(0) : user.email?.charAt(0) || '?'}
+                            </div>
+                          )}
                           <div className="ml-4">
                             <div className="text-sm font-medium text-gray-900">{user.name || 'Unknown User'}</div>
                             <div className="text-sm text-gray-500">{user.email}</div>

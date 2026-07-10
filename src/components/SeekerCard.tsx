@@ -47,6 +47,30 @@ export function SeekerCard({ seeker, user, onEdit, onDelete, onViewImage, onHire
         <h3 className="text-sm font-semibold text-gray-900 line-clamp-1 mb-1">{seeker.title}</h3>
         <p className="text-xs text-gray-500 line-clamp-2 mb-3 flex-1">{seeker.description}</p>
         
+        {/* Creator Info */}
+        <div className="flex items-center space-x-2 mb-3 p-2 bg-gray-50 rounded-xl border border-gray-100">
+          {seeker.profiles?.avatar_url ? (
+            <img 
+              src={seeker.profiles.avatar_url} 
+              alt={seeker.profiles.name} 
+              className="w-8 h-8 rounded-full object-cover border border-white shadow-sm"
+              referrerPolicy="no-referrer"
+            />
+          ) : (
+            <div className="w-8 h-8 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center font-bold text-[10px] shrink-0 border border-white shadow-sm">
+              {seeker.profiles?.name?.charAt(0).toUpperCase() || 'U'}
+            </div>
+          )}
+          <div className="min-w-0">
+            <p className="text-[10px] font-bold text-gray-900 truncate">
+              {seeker.profiles?.name || 'Anonymous User'}
+            </p>
+            <p className="text-[9px] text-gray-400 truncate">
+              {seeker.profiles?.status === 'Verified' ? 'Verified Professional' : 'Active Member'}
+            </p>
+          </div>
+        </div>
+
         <div className="flex items-center justify-between text-[10px] text-gray-500 mb-3 gap-2">
           <div className="flex items-center gap-1">
             <MapPin className="w-3 h-3" />

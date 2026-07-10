@@ -5,10 +5,20 @@ export interface Profile {
   name: string;
   email: string;
   status: string;
+  avatar_url?: string;
+  bio?: string;
 }
 
-let friendshipsSchemaVersion: 'v1' | 'v2' | null = null; // v1: user_id/friend_id, v2: user_id1/user_id2
+let friendshipsSchemaVersion: 'v1' | 'v2' | null = null;
 let useLocalFallback = false;
+
+const isUUID = (id: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+
+// Function to reset fallback state (can be called to retry Supabase)
+export const resetChatFallback = () => {
+  useLocalFallback = false;
+  friendshipsSchemaVersion = null;
+};
 
 // Local storage helpers
 function getLocalFriendships(): any[] {
@@ -72,7 +82,6 @@ function saveLocalFriendRequests(requests: any[]) {
 }
 
 async function getFriendshipsSchemaVersion(): Promise<'v1' | 'v2'> {
-  if (useLocalFallback) return 'v2';
   if (friendshipsSchemaVersion) return friendshipsSchemaVersion;
   
   try {
@@ -83,7 +92,7 @@ async function getFriendshipsSchemaVersion(): Promise<'v1' | 'v2'> {
       
     if (error) {
       if (error.code === '42P01' || error.message?.includes('does not exist') || error.message?.includes('relation')) {
-        useLocalFallback = true;
+        // Table doesn't exist, we'll use local but don't set global flag yet as other tables might exist
         return 'v2';
       }
       if (error.code === '42703' || error.message?.includes('user_id1') || error.message?.includes('column')) {
@@ -95,58 +104,82 @@ async function getFriendshipsSchemaVersion(): Promise<'v1' | 'v2'> {
       friendshipsSchemaVersion = 'v2';
     }
   } catch (e: any) {
-    console.error('Detailed Error detecting friendship schema version:', {
-      message: e?.message || 'Unknown error',
-      code: e?.code || 'N/A',
-      details: e?.details || '',
-      hint: e?.hint || '',
-      fullError: e
-    });
-    if (e && (e.code === '42P01' || e.message?.includes('does not exist') || e.message?.includes('relation'))) {
-      useLocalFallback = true;
-      return 'v2';
-    }
     friendshipsSchemaVersion = 'v1';
   }
-  return friendshipsSchemaVersion;
+  return friendshipsSchemaVersion || 'v1';
 }
 
 const defaultProfiles = [
-  { id: 'user-alice-123', name: 'Alice Smith', email: 'alice@example.com', status: 'Verified' },
-  { id: 'user-bob-456', name: 'Bob Jones', email: 'bob@example.com', status: 'Verified' },
-  { id: 'user-charlie-789', name: 'Charlie Brown', email: 'charlie@example.com', status: 'Active' },
-  { id: 'user-david-101', name: 'David Miller', email: 'david@example.com', status: 'Active' },
+  { 
+    id: 'a11ce000-0000-0000-0000-000000000000', 
+    name: 'Alice Smith', 
+    email: 'alice@example.com', 
+    status: 'Verified',
+    avatar_url: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&q=80&w=150',
+    bio: 'Professional cleaner with 5 years of experience. I love making spaces sparkle!'
+  },
+  { 
+    id: 'b0b00000-0000-0000-0000-000000000000', 
+    name: 'Bob Jones', 
+    email: 'bob@example.com', 
+    status: 'Verified',
+    avatar_url: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&q=80&w=150',
+    bio: 'Avid gardener and landscaping expert. Let me help you build your dream garden.'
+  },
+  { 
+    id: 'c8a111e0-0000-0000-0000-000000000000', 
+    name: 'Charlie Brown', 
+    email: 'charlie@example.com', 
+    status: 'Active',
+    avatar_url: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&q=80&w=150',
+    bio: 'SIRA accredited security guard. Safety and surveillance are my top priorities.'
+  },
+  { 
+    id: 'da71d000-0000-0000-0000-000000000000', 
+    name: 'David Miller', 
+    email: 'david@example.com', 
+    status: 'Active',
+    avatar_url: 'https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?auto=format&fit=crop&q=80&w=150',
+    bio: 'Handyman and general repair specialist. No job is too small!'
+  },
 ];
 
 const getLocalContacts = async (userId: string) => {
   const localFriendships = getLocalFriendships();
   const friendships = localFriendships.filter((f: any) => f.user_id1 === userId || f.user_id2 === userId);
-  const friendIds = friendships.map((f: any) => f.user_id1 === userId ? f.user_id2 : f.user_id1);
+  const friendIds = new Set(friendships.map((f: any) => f.user_id1 === userId ? f.user_id2 : f.user_id1));
 
-  const validFriendIds = friendIds.filter((id): id is string => typeof id === 'string' && id.trim() !== '');
+  // Also scan messages to find anyone else we've talked to
+  try {
+    const data = localStorage.getItem('chat_messages');
+    if (data) {
+      const allMessages: Message[] = JSON.parse(data);
+      allMessages.forEach(m => {
+        if (m.sender_id === userId) friendIds.add(m.receiver_id);
+        if (m.receiver_id === userId) friendIds.add(m.sender_id);
+      });
+    }
+  } catch (e) {
+    console.warn('Error scanning messages for contacts:', e);
+  }
+
+  const validFriendIds = Array.from(friendIds).filter((id): id is string => typeof id === 'string' && id.trim() !== '');
   if (validFriendIds.length === 0) return [];
 
   let profiles: any[] = [];
   try {
     const { data } = await supabase
       .from('profiles')
-      .select('id, name, email, status')
+      .select('id, name, email, status, avatar_url, bio')
       .in('id', validFriendIds);
     if (data) profiles = data;
   } catch (err: any) {
-    console.error('Detailed Error pre-fetching profiles for local contacts:', {
-      message: err?.message || 'Unknown error',
-      code: err?.code || 'N/A',
-      details: err?.details || '',
-      hint: err?.hint || '',
-      fullError: err
-    });
+    console.warn('Error pre-fetching profiles for local contacts:', err?.message || err);
   }
 
   const profileMap = new Map(profiles.map(p => [p.id, p]));
 
-  return friendships.map((f: any) => {
-    const friendId = f.user_id1 === userId ? f.user_id2 : f.user_id1;
+  return validFriendIds.map((friendId) => {
     let profile = profileMap.get(friendId);
     if (!profile) {
       const foundMock = defaultProfiles.find(p => p.id === friendId);
@@ -176,7 +209,7 @@ const getLocalFriendRequestsData = async (userId: string) => {
   try {
     const { data } = await supabase
       .from('profiles')
-      .select('id, name, email')
+      .select('id, name, email, avatar_url, bio')
       .in('id', validSenderIds);
     if (data) profiles = data;
   } catch (err: any) {
@@ -213,7 +246,19 @@ const getLocalFriendRequestsData = async (userId: string) => {
 const getLocalAllUsers = async (userId: string) => {
   let profiles: any[] = [];
   try {
-    const { data } = await supabase.from('profiles').select('id, name, email, status');
+    let data: any[] | null = null;
+    let error: any = null;
+    
+    const firstResult = await supabase.from('profiles').select('id, name, email, status, avatar_url, bio');
+    data = firstResult.data;
+    error = firstResult.error;
+
+    if (error && error.message?.includes('status')) {
+      console.warn('Profiles table missing status column in getLocalAllUsers, retrying without it');
+      const retry = await supabase.from('profiles').select('id, name, email, avatar_url, bio');
+      data = retry.data;
+      error = retry.error;
+    }
     if (data) profiles = data;
   } catch (err: any) {
     console.error('Detailed Error pre-fetching all profiles:', {
@@ -280,10 +325,9 @@ const getLocalAllUsers = async (userId: string) => {
 
 export const fetchContacts = async (userId: string) => {
   try {
+    if (!isUUID(userId)) return getLocalContacts(userId);
+    
     const version = await getFriendshipsSchemaVersion();
-    if (useLocalFallback) {
-      return getLocalContacts(userId);
-    }
     
     let friendships: any[] | null = null;
     let friendshipError: any = null;
@@ -305,57 +349,102 @@ export const fetchContacts = async (userId: string) => {
     }
     
     if (friendshipError) {
+      // If table is missing, use local fallback quietly
       if (friendshipError.code === '42P01' || friendshipError.message?.includes('relation') || friendshipError.message?.includes('does not exist')) {
-        useLocalFallback = true;
         return getLocalContacts(userId);
       }
       throw friendshipError;
     }
     
-    if (!friendships || friendships.length === 0) return [];
+    if (!friendships || friendships.length === 0) {
+      // If DB is empty, also return local contacts to ensure we show something
+      const local = await getLocalContacts(userId);
+      return local;
+    }
 
     const friendIds = friendships.map(f => {
       if (version === 'v2') {
         return f.user_id1 === userId ? f.user_id2 : f.user_id1;
       } else {
-        return f.user_id === userId ? f.friend_id : f.user_id;
+        return f.user_id === userId ? f.friend_id : (f.user_id || f.friend_id);
       }
     });
     
     const validFriendIds = friendIds.filter((id): id is string => typeof id === 'string' && id.trim() !== '');
-    if (validFriendIds.length === 0) return [];
+    const supabaseFriendIds = validFriendIds.filter(isUUID);
     
-    const { data: profiles, error: profilesError } = await supabase
-      .from('profiles')
-      .select('id, name, email, status')
-      .in('id', validFriendIds);
+    // Fetch profiles for these friends
+    let profiles: any[] | null = null;
+    let profilesError: any = null;
 
-    if (profilesError) throw profilesError;
+    if (supabaseFriendIds.length > 0) {
+      const result = await supabase
+        .from('profiles')
+        .select('id, name, email, status, avatar_url, bio')
+        .in('id', supabaseFriendIds);
+      
+      profiles = result.data;
+      profilesError = result.error;
 
-    const profileMap = new Map(profiles?.map(p => [p.id, p]));
+      if (profilesError && profilesError.message?.includes('status')) {
+        console.warn('Profiles table missing status column in fetchContacts, retrying without it');
+        const retry = await supabase
+          .from('profiles')
+          .select('id, name, email, avatar_url, bio')
+          .in('id', supabaseFriendIds);
+        profiles = retry.data;
+        profilesError = retry.error;
+      }
+    } else {
+      profiles = [];
+      profilesError = null;
+    }
 
-    return friendships.map((f, index) => {
+    if (profilesError) {
+      console.warn('Error fetching profiles for contacts, using local info:', profilesError);
+    }
+
+    const profileMap = new Map((profiles || []).map(p => [p.id, p]));
+
+    // Also get local contacts to merge (to ensure previously made chats display)
+    const localContacts = await getLocalContacts(userId);
+    const result = friendships.map((f, index) => {
       const friendId = friendIds[index];
+      let profile = profileMap.get(friendId);
+      
+      // If profile not in DB, check local contacts
+      if (!profile) {
+        const local = localContacts.find(lc => lc.friend_id === friendId);
+        if (local) profile = local.profiles;
+      }
+
       return {
         friend_id: friendId,
-        profiles: profileMap.get(friendId) || null
+        profiles: profile || {
+          id: friendId,
+          name: `User ${friendId.substring(0, 4)}`,
+          status: 'Active'
+        }
       };
     });
-  } catch (e: any) {
-    console.error('Detailed Error fetching contacts (falling back to local):', {
-      message: e?.message || 'Unknown error',
-      code: e?.code || 'N/A',
-      details: e?.details || '',
-      hint: e?.hint || '',
-      fullError: e
+
+    // Merge in any local contacts that aren't in the DB friendships yet
+    localContacts.forEach(lc => {
+      if (!result.some(r => r.friend_id === lc.friend_id)) {
+        result.push(lc);
+      }
     });
-    useLocalFallback = true;
+
+    return result;
+  } catch (e: any) {
+    console.warn('Error fetching contacts from DB, falling back to local:', e?.message || e);
     return getLocalContacts(userId);
   }
 };
 
 export const fetchFriendRequests = async (userId: string) => {
   try {
+    if (!isUUID(userId)) return getLocalFriendRequestsData(userId);
     await getFriendshipsSchemaVersion();
     if (useLocalFallback) {
       return getLocalFriendRequestsData(userId);
@@ -377,16 +466,18 @@ export const fetchFriendRequests = async (userId: string) => {
 
     const senderIds = requests.map(r => r.sender_id);
     const validSenderIds = senderIds.filter((id): id is string => typeof id === 'string' && id.trim() !== '');
-    if (validSenderIds.length === 0) return [];
+    const supabaseSenderIds = validSenderIds.filter(isUUID);
 
-    const { data: profiles, error: profilesError } = await supabase
-      .from('profiles')
-      .select('id, name, email')
-      .in('id', validSenderIds);
+    const { data: profiles, error: profilesError } = supabaseSenderIds.length > 0
+      ? await supabase
+        .from('profiles')
+        .select('id, name, email, avatar_url, bio')
+        .in('id', supabaseSenderIds)
+      : { data: [], error: null };
 
     if (profilesError) throw profilesError;
 
-    const profileMap = new Map(profiles?.map(p => [p.id, p]));
+    const profileMap = new Map((profiles || []).map(p => [p.id, p] as [string, any]));
 
     return requests.map(r => ({
       id: r.id,
@@ -394,13 +485,10 @@ export const fetchFriendRequests = async (userId: string) => {
       profiles: profileMap.get(r.sender_id) || null
     }));
   } catch (e: any) {
-    console.error('Detailed Error fetching friend requests (falling back to local):', {
-      message: e?.message || 'Unknown error',
-      code: e?.code || 'N/A',
-      details: e?.details || '',
-      hint: e?.hint || '',
-      fullError: e
-    });
+    if (e?.code === '42P01' || e?.message?.includes('does not exist')) {
+      return getLocalFriendRequestsData(userId);
+    }
+    console.warn('Error fetching friend requests from DB, falling back to local:', e?.message || e);
     useLocalFallback = true;
     return getLocalFriendRequestsData(userId);
   }
@@ -408,6 +496,7 @@ export const fetchFriendRequests = async (userId: string) => {
 
 export const fetchAllUsers = async (userId: string) => {
   try {
+    if (!isUUID(userId)) return getLocalAllUsers(userId);
     const version = await getFriendshipsSchemaVersion();
     if (useLocalFallback) {
       return getLocalAllUsers(userId);
@@ -459,11 +548,38 @@ export const fetchAllUsers = async (userId: string) => {
 
     const excludedIds = [userId, ...friendIds, ...sentRequestIds];
     const validExcludedIds = excludedIds.filter((id): id is string => typeof id === 'string' && id.trim() !== '');
+    
+    // Filter out non-UUIDs for Supabase query if they look like local mock IDs
+    const supabaseExcludedIds = validExcludedIds.filter(isUUID);
 
-    const { data, error } = await supabase
+    let query = supabase
       .from('profiles')
-      .select('id, name, email, status')
-      .not('id', 'in', `(${validExcludedIds.join(',')})`);
+      .select('id, name, email, status, avatar_url, bio');
+    
+    if (supabaseExcludedIds.length > 0) {
+      query = query.not('id', 'in', supabaseExcludedIds);
+    }
+
+    let data: any[] | null = null;
+    let error: any = null;
+
+    const firstResult = await query;
+    data = firstResult.data;
+    error = firstResult.error;
+
+    if (error && error.message?.includes('status')) {
+      // Try again without status column if it's missing
+      console.warn('Profiles table missing status column, retrying without it');
+      let retryQuery = supabase
+        .from('profiles')
+        .select('id, name, email, avatar_url, bio');
+      if (supabaseExcludedIds.length > 0) {
+        retryQuery = retryQuery.not('id', 'in', supabaseExcludedIds);
+      }
+      const retry = await retryQuery;
+      data = retry.data;
+      error = retry.error;
+    }
 
     if (error) throw error;
 
@@ -500,20 +616,17 @@ export const fetchAllUsers = async (userId: string) => {
 
     return enriched.filter((p: any) => p.status === 'Verified');
   } catch (e: any) {
-    console.error('Detailed Error fetching all users (falling back to local):', {
-      message: e?.message || 'Unknown error',
-      code: e?.code || 'N/A',
-      details: e?.details || '',
-      hint: e?.hint || '',
-      fullError: e
-    });
+    if (e?.code === '42P01' || e?.message?.includes('does not exist')) {
+      return getLocalAllUsers(userId);
+    }
+    console.warn('Error fetching all users from DB, falling back to local:', e?.message || e);
     useLocalFallback = true;
     return getLocalAllUsers(userId);
   }
 };
 
 export const sendFriendRequest = async (senderId: string, receiverId: string) => {
-  if (useLocalFallback) {
+  if (useLocalFallback || !isUUID(senderId) || !isUUID(receiverId)) {
     const localRequests = getLocalFriendRequests();
     if (!localRequests.some((r: any) => r.sender_id === senderId && r.receiver_id === receiverId)) {
       localRequests.push({
@@ -547,7 +660,7 @@ export const sendFriendRequest = async (senderId: string, receiverId: string) =>
 };
 
 export const acceptFriendRequest = async (requestId: string, senderId: string, receiverId: string) => {
-  if (useLocalFallback) {
+  if (useLocalFallback || !isUUID(senderId) || !isUUID(receiverId)) {
     // Remove request
     const localRequests = getLocalFriendRequests();
     const updatedRequests = localRequests.filter((r: any) => r.id !== requestId);

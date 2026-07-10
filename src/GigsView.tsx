@@ -61,30 +61,28 @@ export function GigsView({ onDirectToChat }: GigsViewProps) {
     setLoading(true);
     setError(null);
     try {
-      const { data, error } = await supabase
+      const { data, error: supabaseError } = await supabase
         .from('gigs')
-        .select('*')
+        .select('*, profiles(id, name, avatar_url, bio, status)')
         .order('created_at', { ascending: false });
 
-      if (error) {
-        if (error.code === '42P01') {
-          console.warn('Gigs table does not exist yet.');
+      if (supabaseError) {
+        const isMissingTable = supabaseError.code === '42P01' || 
+                              supabaseError.message?.toLowerCase().includes('does not exist') ||
+                              supabaseError.message?.toLowerCase().includes('relation');
+        if (isMissingTable) {
+          console.warn('Gigs table not found or accessible. Using empty list fallback.');
           setGigs([]);
         } else {
-          throw error;
+          console.warn('Supabase error fetching gigs, falling back:', supabaseError);
+          setGigs([]);
         }
       } else {
         setGigs(data || []);
       }
     } catch (err: any) {
-      console.error('Detailed Error fetching gigs:', {
-        message: err?.message || 'Unknown error',
-        code: err?.code || 'N/A',
-        details: err?.details || '',
-        hint: err?.hint || '',
-        fullError: err
-      });
-      setError('Could not load gigs. Please try again later.');
+      console.warn('Unexpected error fetching gigs, falling back:', err?.message || err);
+      setGigs([]);
     } finally {
       setLoading(false);
     }

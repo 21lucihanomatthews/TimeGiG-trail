@@ -8,7 +8,7 @@ import { sendFriendRequest } from './lib/chat';
 
 const DEFAULT_SEEKERS = [
   {
-    id: 'seeker-alice-123',
+    id: '5ee4e400-e29b-41d4-a716-446655440000',
     title: 'Professional House & Office Cleaner',
     description: 'Highly detailed and experienced house cleaner available for daily domestic chores, deep cleaning, and office tidying. Trustworthy, reliable, and referenced.',
     category: 'Cleaning',
@@ -18,11 +18,11 @@ const DEFAULT_SEEKERS = [
     is_immediate: true,
     scheduled_date: null,
     images: ['https://images.unsplash.com/photo-1581578731548-c64695cc6952?auto=format&fit=crop&q=80&w=600'],
-    user_id: 'user-alice-123',
+    user_id: 'a11ce000-0000-0000-0000-000000000000',
     created_at: new Date().toISOString()
   },
   {
-    id: 'seeker-bob-456',
+    id: '5ee4e400-e29b-41d4-a716-446655440001',
     title: 'Expert Gardener & Landscaping Professional',
     description: 'Over 6 years of experience in lawn mowing, hedge trimming, tree pruning, soil fertilization, and custom landscaping design. Have my own professional tools.',
     category: 'Gardening',
@@ -32,11 +32,11 @@ const DEFAULT_SEEKERS = [
     is_immediate: true,
     scheduled_date: null,
     images: ['https://images.unsplash.com/photo-1416879595882-3373a0480b5b?auto=format&fit=crop&q=80&w=600'],
-    user_id: 'user-bob-456',
+    user_id: 'b0b00000-0000-0000-0000-000000000000',
     created_at: new Date().toISOString()
   },
   {
-    id: 'seeker-charlie-789',
+    id: '5ee4e400-e29b-41d4-a716-446655440002',
     title: 'SIRA Accredited Security Guard',
     description: 'Professional security guard with advanced surveillance training, access gate control experience, and personal protection. Available for both day/night shifts.',
     category: 'Security',
@@ -46,7 +46,7 @@ const DEFAULT_SEEKERS = [
     is_immediate: false,
     scheduled_date: new Date(Date.now() + 86400000 * 3).toISOString().split('T')[0],
     images: ['https://images.unsplash.com/photo-1505673542670-a5e3ff5b14a3?auto=format&fit=crop&q=80&w=600'],
-    user_id: 'user-charlie-789',
+    user_id: 'c8a111e0-0000-0000-0000-000000000000',
     created_at: new Date().toISOString()
   }
 ];
@@ -139,32 +139,34 @@ export function SeekersView({ onDirectToChat }: SeekersViewProps) {
     setLoading(true);
     setError(null);
     try {
-      const { data, error } = await supabase
+      const { data, error: supabaseError } = await supabase
         .from('seekers')
-        .select('*')
+        .select('*, profiles(id, name, avatar_url, bio, status)')
         .order('created_at', { ascending: false });
 
-      if (error) {
-        if (error.code === '42P01' || error.message?.includes('does not exist')) {
-          console.warn('Seekers table does not exist yet. Falling back to local storage.');
+      if (supabaseError) {
+        // Handle common "table missing" or "insufficient privileges" errors by falling back quietly
+        const isMissingTable = supabaseError.code === '42P01' || 
+                              supabaseError.message?.toLowerCase().includes('does not exist') ||
+                              supabaseError.message?.toLowerCase().includes('relation');
+        
+        if (isMissingTable) {
+          console.warn('Seekers table not found or accessible. Using local fallback.');
           setIsUsingLocalFallback(true);
           setSeekers(getLocalSeekers());
         } else {
-          throw error;
+          // If it's a real error, we still fallback but maybe log a bit more info as a warning
+          console.warn('Supabase error fetching seekers, falling back:', supabaseError);
+          setIsUsingLocalFallback(true);
+          setSeekers(getLocalSeekers());
         }
       } else {
         setSeekers(data || []);
         setIsUsingLocalFallback(false);
       }
     } catch (err: any) {
-      console.error('Detailed Error fetching seekers:', {
-        message: err?.message || 'Unknown error',
-        code: err?.code || 'N/A',
-        details: err?.details || '',
-        hint: err?.hint || '',
-        fullError: err
-      });
-      // Fallback
+      // Catch any unexpected runtime errors
+      console.warn('Unexpected error fetching seekers, falling back:', err?.message || err);
       setIsUsingLocalFallback(true);
       setSeekers(getLocalSeekers());
     } finally {
