@@ -1,22 +1,71 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Briefcase, MapPin, Calendar, DollarSign, Upload, Plus, ArrowLeft, Loader2, Image as ImageIcon, X, Search, Filter, SlidersHorizontal, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Briefcase, MapPin, Calendar, DollarSign, Upload, Plus, ArrowLeft, Loader2, Image as ImageIcon, X, Search, Filter, SlidersHorizontal, ChevronLeft, ChevronRight, Users, MessageSquare } from 'lucide-react';
 import { supabase } from './lib/supabase';
-import { GigCard } from './components/GigCard';
+import { SeekerCard } from './components/SeekerCard';
 import { SkeletonCard } from './components/SkeletonCard';
+import { sendFriendRequest } from './lib/chat';
 
-interface GigsViewProps {
+const DEFAULT_SEEKERS = [
+  {
+    id: 'seeker-alice-123',
+    title: 'Professional House & Office Cleaner',
+    description: 'Highly detailed and experienced house cleaner available for daily domestic chores, deep cleaning, and office tidying. Trustworthy, reliable, and referenced.',
+    category: 'Cleaning',
+    province: 'Gauteng',
+    location: 'Pretoria',
+    price: 250,
+    is_immediate: true,
+    scheduled_date: null,
+    images: ['https://images.unsplash.com/photo-1581578731548-c64695cc6952?auto=format&fit=crop&q=80&w=600'],
+    user_id: 'user-alice-123',
+    created_at: new Date().toISOString()
+  },
+  {
+    id: 'seeker-bob-456',
+    title: 'Expert Gardener & Landscaping Professional',
+    description: 'Over 6 years of experience in lawn mowing, hedge trimming, tree pruning, soil fertilization, and custom landscaping design. Have my own professional tools.',
+    category: 'Gardening',
+    province: 'Western Cape',
+    location: 'Cape Town',
+    price: 350,
+    is_immediate: true,
+    scheduled_date: null,
+    images: ['https://images.unsplash.com/photo-1416879595882-3373a0480b5b?auto=format&fit=crop&q=80&w=600'],
+    user_id: 'user-bob-456',
+    created_at: new Date().toISOString()
+  },
+  {
+    id: 'seeker-charlie-789',
+    title: 'SIRA Accredited Security Guard',
+    description: 'Professional security guard with advanced surveillance training, access gate control experience, and personal protection. Available for both day/night shifts.',
+    category: 'Security',
+    province: 'KwaZulu-Natal',
+    location: 'Durban',
+    price: 400,
+    is_immediate: false,
+    scheduled_date: new Date(Date.now() + 86400000 * 3).toISOString().split('T')[0],
+    images: ['https://images.unsplash.com/photo-1505673542670-a5e3ff5b14a3?auto=format&fit=crop&q=80&w=600'],
+    user_id: 'user-charlie-789',
+    created_at: new Date().toISOString()
+  }
+];
+
+interface SeekersViewProps {
   onDirectToChat?: (contactId: string, message: string) => void;
   key?: string;
 }
 
-export function GigsView({ onDirectToChat }: GigsViewProps) {
+export function SeekersView({ onDirectToChat }: SeekersViewProps) {
   const [view, setView] = useState<'list' | 'create' | 'success'>('list');
-  const [gigs, setGigs] = useState<any[]>([]);
+  const [seekers, setSeekers] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('All');
   
+  // Database fallback status
+  const [isUsingLocalFallback, setIsUsingLocalFallback] = useState(false);
+
   // Filter state
   const [showFilters, setShowFilters] = useState(false);
   const [filterProvince, setFilterProvince] = useState('');
@@ -34,7 +83,7 @@ export function GigsView({ onDirectToChat }: GigsViewProps) {
   const [price, setPrice] = useState('');
   const [images, setImages] = useState<string[]>([]);
   const [category, setCategory] = useState('General');
-  const [editingGigId, setEditingGigId] = useState<string | null>(null);
+  const [editingSeekerId, setEditingSeekerId] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -45,7 +94,7 @@ export function GigsView({ onDirectToChat }: GigsViewProps) {
 
   useEffect(() => {
     if (toastMessage) {
-      const timer = setTimeout(() => setToastMessage(null), 3000);
+      const timer = setTimeout(() => setToastMessage(null), 3500);
       return () => clearTimeout(timer);
     }
   }, [toastMessage]);
@@ -53,125 +102,127 @@ export function GigsView({ onDirectToChat }: GigsViewProps) {
   useEffect(() => {
     supabase.auth.getUser().then(({ data: { user } }) => setUser(user));
     if (view === 'list') {
-      fetchGigs();
+      fetchSeekers();
     }
   }, [view]);
 
-  const fetchGigs = async () => {
-    setLoading(true);
-    setError(null);
+  // Read mock seekers from localStorage or write default if empty
+  const getLocalSeekers = () => {
     try {
-      const { data, error } = await supabase
-        .from('gigs')
-        .select('*')
-        .order('created_at', { ascending: false });
-
-      if (error) {
-        if (error.code === '42P01') {
-          console.warn('Gigs table does not exist yet.');
-          setGigs([]);
-        } else {
-          throw error;
-        }
+      const data = localStorage.getItem('mock_seekers');
+      if (data) {
+        return JSON.parse(data);
       } else {
-        setGigs(data || []);
+        localStorage.setItem('mock_seekers', JSON.stringify(DEFAULT_SEEKERS));
+        return DEFAULT_SEEKERS;
       }
-    } catch (err: any) {
-      console.error('Detailed Error fetching gigs:', {
-        message: err?.message || 'Unknown error',
-        code: err?.code || 'N/A',
-        details: err?.details || '',
-        hint: err?.hint || '',
-        fullError: err
-      });
-      setError('Could not load gigs. Please try again later.');
-    } finally {
-      setLoading(false);
+    } catch {
+      return DEFAULT_SEEKERS;
     }
   };
 
-  const handleDeleteItem = async (id: string) => {
-    // 1. Optimistic update
-    const previousGigs = gigs;
-    setGigs(prev => prev.filter(g => g.id !== id));
-
+  const saveLocalSeekers = (newList: any[]) => {
     try {
-      // 2. Define the delete function
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) throw new Error("No user found");
-
-      // 3. Execute the deletion
-      const { error } = await supabase
-        .from("gigs")
-        .delete()
-        .eq("id", id)
-        .eq("user_id", user.id);
-      
-      if (error) throw error;
-      
-      // 4. Success logic
-      setToastMessage('Gig deleted successfully.');
-      await fetchGigs();
-    } catch (error: any) {
-      // 5. Error logic
-      console.error('Detailed Error deleting gig:', {
-        message: error?.message || 'Unknown error',
-        code: error?.code || 'N/A',
-        details: error?.details || '',
-        hint: error?.hint || '',
-        fullError: error
-      });
-      setGigs(previousGigs);
-      alert(`Failed to delete gig: ${error.message || 'Unknown error'}`);
-    }
-  };
-
-  const editGig = (gig: any) => {
-    // Populate form with gig data
-    setTitle(gig.title);
-    setDescription(gig.description);
-    setCategory(gig.category || 'General');
-    setProvince(gig.province || '');
-    setLocation(gig.location);
-    setPrice(gig.price);
-    setImages(gig.images || []);
-    setIsImmediate(!gig.scheduled_date);
-    setDate(gig.scheduled_date || '');
-    setView('create');
-    setEditingGigId(gig.id);
-    // Note: This implementation is simplified for brevity. Real edit would need to track `editingGigId`.
-  };
-
-  const handleApplyGig = async (gig: any) => {
-    try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) {
-        setToastMessage('Please login to apply to this gig.');
-        return;
-      }
-
-      if (user.id === gig.user_id) {
-        setToastMessage('You cannot apply to your own gig!');
-        return;
-      }
-
-      const starterMessage = `Hi, I am applying for your gig "${gig.title}". Let's chat about the details!`;
-      
-      if (onDirectToChat) {
-        onDirectToChat(gig.user_id, starterMessage);
-      } else {
-        setToastMessage(`Application sent! Go to the Chat tab to message the owner.`);
-      }
+      localStorage.setItem('mock_seekers', JSON.stringify(newList));
     } catch (e: any) {
-      console.error('Detailed Error applying to gig:', {
+      console.error('Detailed Error saving local seekers:', {
         message: e?.message || 'Unknown error',
         code: e?.code || 'N/A',
         details: e?.details || '',
         hint: e?.hint || '',
         fullError: e
       });
-      setToastMessage('Could not apply to gig.');
     }
+  };
+
+  const fetchSeekers = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const { data, error } = await supabase
+        .from('seekers')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        if (error.code === '42P01' || error.message?.includes('does not exist')) {
+          console.warn('Seekers table does not exist yet. Falling back to local storage.');
+          setIsUsingLocalFallback(true);
+          setSeekers(getLocalSeekers());
+        } else {
+          throw error;
+        }
+      } else {
+        setSeekers(data || []);
+        setIsUsingLocalFallback(false);
+      }
+    } catch (err: any) {
+      console.error('Detailed Error fetching seekers:', {
+        message: err?.message || 'Unknown error',
+        code: err?.code || 'N/A',
+        details: err?.details || '',
+        hint: err?.hint || '',
+        fullError: err
+      });
+      // Fallback
+      setIsUsingLocalFallback(true);
+      setSeekers(getLocalSeekers());
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDeleteItem = async (id: string) => {
+    const previousSeekers = seekers;
+    setSeekers(prev => prev.filter(s => s.id !== id));
+
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error("No user found. Please login first.");
+
+      if (isUsingLocalFallback) {
+        const updated = getLocalSeekers().filter((s: any) => s.id !== id);
+        saveLocalSeekers(updated);
+        setToastMessage('Seeker post deleted successfully.');
+        await fetchSeekers();
+        return;
+      }
+
+      const { error } = await supabase
+        .from("seekers")
+        .delete()
+        .eq("id", id)
+        .eq("user_id", user.id);
+      
+      if (error) throw error;
+      
+      setToastMessage('Seeker post deleted successfully.');
+      await fetchSeekers();
+    } catch (error: any) {
+      console.error('Detailed Error deleting seeker post:', {
+        message: error?.message || 'Unknown error',
+        code: error?.code || 'N/A',
+        details: error?.details || '',
+        hint: error?.hint || '',
+        fullError: error
+      });
+      setSeekers(previousSeekers);
+      alert(`Failed to delete seeker post: ${error.message || 'Unknown error'}`);
+    }
+  };
+
+  const editSeeker = (seeker: any) => {
+    setTitle(seeker.title);
+    setDescription(seeker.description);
+    setCategory(seeker.category || 'General');
+    setProvince(seeker.province || '');
+    setLocation(seeker.location);
+    setPrice(seeker.price);
+    setImages(seeker.images || []);
+    setIsImmediate(!seeker.scheduled_date);
+    setDate(seeker.scheduled_date || '');
+    setView('create');
+    setEditingSeekerId(seeker.id);
   };
 
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -226,8 +277,9 @@ export function GigsView({ onDirectToChat }: GigsViewProps) {
 
     try {
       const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error("No user found. Please login first.");
       
-      const newGig = {
+      const newSeeker = {
         title,
         description,
         is_immediate: isImmediate,
@@ -241,31 +293,45 @@ export function GigsView({ onDirectToChat }: GigsViewProps) {
         created_at: new Date().toISOString()
       };
 
-      let error;
-      if (editingGigId) {
-        ({ error } = await supabase
-          .from('gigs')
-          .update(newGig)
-          .eq('id', editingGigId));
-      } else {
-        ({ error } = await supabase
-          .from('gigs')
-          .insert([newGig]));
-      }
-
-      if (error) {
-        if (error.code === '42P01') {
-          // Table doesn't exist, we will just simulate success and add to local state
-          setGigs([newGig, ...gigs]);
+      if (isUsingLocalFallback) {
+        let localList = getLocalSeekers();
+        if (editingSeekerId) {
+          localList = localList.map((s: any) => s.id === editingSeekerId ? { ...s, ...newSeeker } : s);
         } else {
-          throw error;
+          localList = [{ id: 'seeker-' + Math.random().toString(36).substring(2, 11), ...newSeeker }, ...localList];
         }
+        saveLocalSeekers(localList);
       } else {
-        await fetchGigs();
+        let error;
+        if (editingSeekerId) {
+          ({ error } = await supabase
+            .from('seekers')
+            .update(newSeeker)
+            .eq('id', editingSeekerId));
+        } else {
+          ({ error } = await supabase
+            .from('seekers')
+            .insert([newSeeker]));
+        }
+
+        if (error) {
+          if (error.code === '42P01') {
+            let localList = getLocalSeekers();
+            if (editingSeekerId) {
+              localList = localList.map((s: any) => s.id === editingSeekerId ? { ...s, ...newSeeker } : s);
+            } else {
+              localList = [{ id: 'seeker-' + Math.random().toString(36).substring(2, 11), ...newSeeker }, ...localList];
+            }
+            saveLocalSeekers(localList);
+          } else {
+            throw error;
+          }
+        }
       }
 
+      await fetchSeekers();
       setView('list');
-      setEditingGigId(null);
+      setEditingSeekerId(null);
       // Reset form
       setTitle('');
       setDescription('');
@@ -276,18 +342,63 @@ export function GigsView({ onDirectToChat }: GigsViewProps) {
       setPrice('');
       setImages([]);
     } catch (err: any) {
-      console.error('Detailed Error saving gig:', {
+      console.error('Detailed Error saving seeker post:', {
         message: err?.message || 'Unknown error',
         code: err?.code || 'N/A',
         details: err?.details || '',
         hint: err?.hint || '',
         fullError: err
       });
-      setError(err.message || 'Failed to create gig');
+      setError(err.message || 'Failed to save seeker profile.');
     } finally {
       setIsSubmitting(false);
     }
   };
+
+  const handleHireSeeker = async (seeker: any) => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        setToastMessage('Please login to contact or hire a seeker.');
+        return;
+      }
+
+      if (user.id === seeker.user_id) {
+        setToastMessage('You cannot hire yourself!');
+        return;
+      }
+
+      const starterMessage = `Hi, I am interested in hiring you for your posted service "${seeker.title}". Let's coordinate details!`;
+
+      if (onDirectToChat) {
+        onDirectToChat(seeker.user_id, starterMessage);
+      } else {
+        // Send connection/friend request in the chat system to link both users
+        await sendFriendRequest(user.id, seeker.user_id);
+        setToastMessage(`Hiring/Contact request sent! Connected with ${seeker.title.split(' ')[0]}. Go to the Chat tab to start messaging!`);
+      }
+    } catch (e: any) {
+      console.error('Detailed Error initiating hire:', {
+        message: e?.message || 'Unknown error',
+        code: e?.code || 'N/A',
+        details: e?.details || '',
+        hint: e?.hint || '',
+        fullError: e
+      });
+      setToastMessage(`Hiring/Contact request sent! Go to the Chat tab to start messaging.`);
+    }
+  };
+
+  const filteredSeekers = seekers.filter(seeker => {
+    const matchesCategory = selectedCategory === 'All' || seeker.category === selectedCategory;
+    const matchesSearch = seeker.title.toLowerCase().includes(search.toLowerCase()) || seeker.description.toLowerCase().includes(search.toLowerCase());
+    const matchesProvince = !filterProvince || seeker.province === filterProvince;
+    const matchesLocation = !filterLocation || seeker.location.toLowerCase().includes(filterLocation.toLowerCase());
+    const matchesMinPrice = !filterMinPrice || Number(seeker.price) >= Number(filterMinPrice);
+    const matchesMaxPrice = !filterMaxPrice || Number(seeker.price) <= Number(filterMaxPrice);
+
+    return matchesCategory && matchesSearch && matchesProvince && matchesLocation && matchesMinPrice && matchesMaxPrice;
+  });
 
   if (view === 'success') {
     return (
@@ -297,15 +408,15 @@ export function GigsView({ onDirectToChat }: GigsViewProps) {
         className="max-w-md mx-auto text-center py-12 space-y-6"
       >
         <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mx-auto">
-          <Briefcase className="w-10 h-10 text-green-600" />
+          <Users className="w-10 h-10 text-green-600" />
         </div>
         <h2 className="text-3xl font-bold text-gray-900">Congratulations!</h2>
-        <p className="text-gray-500 text-lg">Your gig has been successfully published and is now live for other users to view and apply to.</p>
+        <p className="text-gray-500 text-lg">Your seeker profile has been successfully published and is now live for hirers to view and hire you.</p>
         <button
           onClick={() => setView('list')}
           className="mt-6 w-full inline-flex justify-center items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none"
         >
-          View All GiGs
+          View All Seekers
         </button>
       </motion.div>
     );
@@ -324,8 +435,8 @@ export function GigsView({ onDirectToChat }: GigsViewProps) {
             <ArrowLeft className="w-5 h-5" />
           </button>
           <div>
-            <h1 className="text-2xl font-semibold text-gray-900">Create a GiG</h1>
-            <p className="mt-1 text-sm text-gray-500">Provide details about the gig you are posting.</p>
+            <h1 className="text-2xl font-semibold text-gray-900">{editingSeekerId ? 'Edit Seeker Profile' : 'Become a Seeker'}</h1>
+            <p className="mt-1 text-sm text-gray-500">List yourself as an available seeker to receive job offers.</p>
           </div>
         </div>
 
@@ -339,7 +450,7 @@ export function GigsView({ onDirectToChat }: GigsViewProps) {
             
             {/* Images */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Gig Images</label>
+              <label className="block text-sm font-medium text-gray-700 mb-2">My Showcase Images (Upload work photos or professional profile)</label>
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4 mb-4">
                 {images.map((img, idx) => (
                   <div key={idx} className="relative aspect-square rounded-lg overflow-hidden border border-gray-200 group">
@@ -363,18 +474,18 @@ export function GigsView({ onDirectToChat }: GigsViewProps) {
 
             <div className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700">Gig Title</label>
-                <input required type="text" value={title} onChange={e => setTitle(e.target.value)} className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-4 py-2 border" placeholder="e.g. Need a plumber for bathroom pipe" />
+                <label className="block text-sm font-medium text-gray-700">Service Title / Job Seeking Name</label>
+                <input required type="text" value={title} onChange={e => setTitle(e.target.value)} className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-4 py-2 border" placeholder="e.g. Experienced Domestic Cleaner & Maid available" />
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700">Description</label>
-                <textarea required rows={4} value={description} onChange={e => setDescription(e.target.value)} className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-4 py-2 border" placeholder="Describe the job in detail..." />
+                <label className="block text-sm font-medium text-gray-700">About Me / My Experience & Skills</label>
+                <textarea required rows={4} value={description} onChange={e => setDescription(e.target.value)} className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-4 py-2 border" placeholder="Describe your experience, reliable references, background, tools you have, and type of work you seek..." />
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700">Category</label>
+                  <label className="block text-sm font-medium text-gray-700">Specialty Category</label>
                   <select required value={category} onChange={e => setCategory(e.target.value)} className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-4 py-2 border bg-white">
                     <option value="Cleaning">Cleaning</option>
                     <option value="Delivery">Delivery</option>
@@ -400,30 +511,30 @@ export function GigsView({ onDirectToChat }: GigsViewProps) {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700">Location</label>
-                  <input required type="text" value={location} onChange={e => setLocation(e.target.value)} className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-4 py-2 border" placeholder="e.g. Cape Town" />
+                  <label className="block text-sm font-medium text-gray-700">City / Location</label>
+                  <input required type="text" value={location} onChange={e => setLocation(e.target.value)} className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-4 py-2 border" placeholder="e.g. Pretoria" />
                 </div>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700">Timing</label>
+                  <label className="block text-sm font-medium text-gray-700">Availability</label>
                   <div className="mt-1 flex rounded-md shadow-sm">
                     <button type="button" onClick={() => setIsImmediate(true)} className={`flex-1 px-4 py-2 text-sm font-medium rounded-l-md border ${isImmediate ? 'bg-indigo-50 text-indigo-700 border-indigo-200' : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'}`}>Immediately</button>
-                    <button type="button" onClick={() => setIsImmediate(false)} className={`flex-1 px-4 py-2 text-sm font-medium rounded-r-md border-t border-r border-b ${!isImmediate ? 'bg-indigo-50 text-indigo-700 border-indigo-200' : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'}`}>Set Date</button>
+                    <button type="button" onClick={() => setIsImmediate(false)} className={`flex-1 px-4 py-2 text-sm font-medium rounded-r-md border-t border-r border-b ${!isImmediate ? 'bg-indigo-50 text-indigo-700 border-indigo-200' : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'}`}>Available From Date</button>
                   </div>
                 </div>
                 
                 {!isImmediate && (
                   <div>
-                    <label className="block text-sm font-medium text-gray-700">Date</label>
+                    <label className="block text-sm font-medium text-gray-700">Available Date</label>
                     <input required type="date" value={date} onChange={e => setDate(e.target.value)} className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-4 py-2 border" />
                   </div>
                 )}
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700">Price Offered (ZAR)</label>
+                <label className="block text-sm font-medium text-gray-700">Desired Daily Rate (ZAR / day)</label>
                 <div className="mt-1 relative rounded-md shadow-sm">
                   <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                     <span className="text-gray-500 sm:text-sm">R</span>
@@ -434,28 +545,17 @@ export function GigsView({ onDirectToChat }: GigsViewProps) {
             </div>
           </div>
           <div className="px-6 py-4 bg-gray-50 border-t border-gray-200 flex justify-end space-x-3">
-            <button type="button" onClick={() => {setView('list'); setEditingGigId(null);}} className="px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none">
+            <button type="button" onClick={() => {setView('list'); setEditingSeekerId(null);}} className="px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none">
               Cancel
             </button>
             <button type="submit" disabled={isSubmitting || images.length === 0} className="inline-flex justify-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none disabled:opacity-50 transition-colors">
-              {isSubmitting ? <Loader2 className="w-5 h-5 animate-spin" /> : editingGigId ? 'Save Changes' : 'Create GiG'}
+              {isSubmitting ? <Loader2 className="w-5 h-5 animate-spin" /> : editingSeekerId ? 'Save Changes' : 'Publish Profile'}
             </button>
           </div>
         </form>
       </motion.div>
     );
   }
-
-  const filteredGigs = gigs.filter(gig => {
-    const matchesCategory = selectedCategory === 'All' || gig.category === selectedCategory;
-    const matchesSearch = gig.title.toLowerCase().includes(search.toLowerCase()) || gig.description.toLowerCase().includes(search.toLowerCase());
-    const matchesProvince = !filterProvince || gig.province === filterProvince;
-    const matchesLocation = !filterLocation || gig.location.toLowerCase().includes(filterLocation.toLowerCase());
-    const matchesMinPrice = !filterMinPrice || Number(gig.price) >= Number(filterMinPrice);
-    const matchesMaxPrice = !filterMaxPrice || Number(gig.price) <= Number(filterMaxPrice);
-
-    return matchesCategory && matchesSearch && matchesProvince && matchesLocation && matchesMinPrice && matchesMaxPrice;
-  });
 
   return (
     <motion.div
@@ -466,7 +566,10 @@ export function GigsView({ onDirectToChat }: GigsViewProps) {
       {/* Header */}
       <div className="flex flex-col gap-6 mb-8">
         <div className="flex items-center justify-between">
-          <h1 className="text-3xl font-bold text-gray-900">GiGs Marketplace</h1>
+          <div>
+            <h1 className="text-3xl font-bold text-gray-900">Work Seekers</h1>
+            <p className="text-sm text-gray-500 mt-1">Browse reliable workers available for immediate hiring.</p>
+          </div>
         </div>
 
         {/* Search & Filters */}
@@ -475,7 +578,7 @@ export function GigsView({ onDirectToChat }: GigsViewProps) {
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 w-5 h-5" />
             <input 
               type="text" 
-              placeholder="Search for gigs..." 
+              placeholder="Search by keywords, services or skill..." 
               value={search}
               onChange={e => setSearch(e.target.value)}
               className="w-full pl-10 pr-4 py-3 rounded-xl border border-gray-200 focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none shadow-sm"
@@ -498,7 +601,7 @@ export function GigsView({ onDirectToChat }: GigsViewProps) {
                 <button onClick={() => setShowFilters(false)} className="text-gray-400 hover:text-gray-600"><X /></button>
               </div>
               <div className="space-y-4">
-                <select value={filterProvince} onChange={e => setFilterProvince(e.target.value)} className="w-full p-2 border border-gray-300 rounded-lg">
+                <select value={filterProvince} onChange={e => setFilterProvince(e.target.value)} className="w-full p-2 border border-gray-300 rounded-lg bg-white">
                   <option value="">All Provinces</option>
                   <option value="Eastern Cape">Eastern Cape</option>
                   <option value="Free State">Free State</option>
@@ -510,12 +613,12 @@ export function GigsView({ onDirectToChat }: GigsViewProps) {
                   <option value="North West">North West</option>
                   <option value="Western Cape">Western Cape</option>
                 </select>
-                <input type="text" placeholder="Location" value={filterLocation} onChange={e => setFilterLocation(e.target.value)} className="w-full p-2 border border-gray-300 rounded-lg" />
+                <input type="text" placeholder="City / Location" value={filterLocation} onChange={e => setFilterLocation(e.target.value)} className="w-full p-2 border border-gray-300 rounded-lg" />
                 <div className="flex gap-2">
                   <input type="number" placeholder="Min Price" value={filterMinPrice} onChange={e => setFilterMinPrice(e.target.value)} className="w-1/2 p-2 border border-gray-300 rounded-lg" />
                   <input type="number" placeholder="Max Price" value={filterMaxPrice} onChange={e => setFilterMaxPrice(e.target.value)} className="w-1/2 p-2 border border-gray-300 rounded-lg" />
                 </div>
-                <button onClick={() => setShowFilters(false)} className="w-full bg-indigo-600 text-white p-2 rounded-lg font-medium">Apply</button>
+                <button onClick={() => setShowFilters(false)} className="w-full bg-indigo-600 text-white p-2 rounded-lg font-medium">Apply Filters</button>
               </div>
             </div>
           </div>
@@ -538,21 +641,29 @@ export function GigsView({ onDirectToChat }: GigsViewProps) {
       {/* Content */}
       {loading ? (
         <div className="grid grid-cols-2 gap-4">
-          {[...Array(10)].map((_, i) => <SkeletonCard key={i} />)}
+          {[...Array(6)].map((_, i) => <SkeletonCard key={i} />)}
         </div>
-      ) : filteredGigs.length === 0 ? (
+      ) : filteredSeekers.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-20 text-center">
           <div className="w-24 h-24 bg-gray-100 rounded-full flex items-center justify-center mb-6">
-            <Briefcase className="w-10 h-10 text-gray-400" />
+            <Users className="w-10 h-10 text-gray-400" />
           </div>
-          <h3 className="text-xl font-bold text-gray-900">No GiGs Available</h3>
-          <p className="text-gray-500 mt-2 max-w-sm">There are currently no active gigs matching your search. Be the first to post a gig.</p>
+          <h3 className="text-xl font-bold text-gray-900">No Seekers Found</h3>
+          <p className="text-gray-500 mt-2 max-w-sm">There are no work seekers matching your filters. Be the first to create a Seeker profile!</p>
         </div>
       ) : (
         <div className="grid grid-cols-2 gap-4">
           <AnimatePresence>
-            {filteredGigs.map((gig: any, idx: number) => (
-              <GigCard key={idx} gig={gig} user={user} onEdit={editGig} onDelete={handleDeleteItem} onViewImage={(images) => { setCurrentImageIndex(0); setViewImages(images); }} onApply={handleApplyGig} />
+            {filteredSeekers.map((seeker: any, idx: number) => (
+              <SeekerCard 
+                key={seeker.id || idx} 
+                seeker={seeker} 
+                user={user} 
+                onEdit={editSeeker} 
+                onDelete={handleDeleteItem} 
+                onViewImage={(images) => { setCurrentImageIndex(0); setViewImages(images); }}
+                onHire={handleHireSeeker}
+              />
             ))}
           </AnimatePresence>
         </div>
@@ -581,7 +692,7 @@ export function GigsView({ onDirectToChat }: GigsViewProps) {
             initial={{ opacity: 0, y: 50 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 50 }}
-            className="fixed bottom-24 left-1/2 -translate-x-1/2 bg-green-600 text-white px-6 py-3 rounded-full shadow-lg z-50"
+            className="fixed bottom-24 left-1/2 -translate-x-1/2 bg-indigo-600 text-white px-6 py-3 rounded-full shadow-lg z-50 text-sm font-medium text-center max-w-md"
           >
             {toastMessage}
           </motion.div>
@@ -590,12 +701,12 @@ export function GigsView({ onDirectToChat }: GigsViewProps) {
 
       {/* Floating Action Button */}
       <button
-        onClick={() => { setView('create'); setEditingGigId(null); }}
-        className="fixed bottom-8 right-8 p-4 bg-indigo-600 text-white rounded-full shadow-lg hover:bg-indigo-700 transition-transform hover:scale-105 flex items-center justify-center z-50"
+        onClick={() => { setView('create'); setEditingSeekerId(null); }}
+        className="fixed bottom-8 right-8 p-4 bg-indigo-600 text-white rounded-full shadow-lg hover:bg-indigo-700 transition-transform hover:scale-105 flex items-center justify-center z-50 shadow-indigo-200"
+        title="Become a Seeker"
       >
         <Plus className="w-8 h-8" />
       </button>
     </motion.div>
   );
 }
-

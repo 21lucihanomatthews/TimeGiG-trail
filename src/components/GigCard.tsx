@@ -8,10 +8,11 @@ interface GigCardProps {
   onEdit: (gig: any) => void;
   onDelete: (id: string) => void;
   onViewImage: (images: string[]) => void;
+  onApply?: (gig: any) => void;
   key?: React.Key;
 }
 
-export function GigCard({ gig, user, onEdit, onDelete, onViewImage }: GigCardProps) {
+export function GigCard({ gig, user, onEdit, onDelete, onViewImage, onApply }: GigCardProps) {
   const isOwner = user?.id === gig.user_id;
   console.log('GigCard debug:', { isOwner, userId: user?.id, gigUserId: gig.user_id });
 
@@ -66,7 +67,10 @@ export function GigCard({ gig, user, onEdit, onDelete, onViewImage }: GigCardPro
               </button>
             </>
           ) : (
-            <button className="flex-1 py-1.5 px-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-medium text-xs transition-colors">
+            <button 
+              onClick={() => onApply?.(gig)}
+              className="flex-1 py-1.5 px-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-medium text-xs transition-colors"
+            >
               Apply
             </button>
           )}

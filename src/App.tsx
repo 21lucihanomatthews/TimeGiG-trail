@@ -1,17 +1,481 @@
 import React, { useState, useEffect } from 'react';
-import { Shield, Users, ArrowRight, Link as LinkIcon, Copy, Gift, LogOut, Loader2, Wallet, UserCheck, Eye, MoreVertical, Coins, Upload, ArrowLeft, Plus, Maximize, Briefcase, MessageSquare, Search } from 'lucide-react';
+import { Shield, Users, ArrowRight, Link as LinkIcon, Copy, Gift, LogOut, Loader2, Wallet, UserCheck, Eye, MoreVertical, Coins, Upload, ArrowLeft, Plus, Maximize, Briefcase, MessageSquare, Search, User, Edit2, Check, ShieldCheck, Bell, MapPin, Phone, Globe, Sparkles, Trash2, Camera, Award, Image as ImageIcon, Lock } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { GigsView } from './GigsView';
+import { SeekersView } from './SeekersView';
+import { ChatView } from './components/ChatView';
 import { supabase } from './lib/supabase';
 import { Session } from '@supabase/supabase-js';
+import { ensureFriendship, sendLocalMessage } from './lib/chat';
 
 type Tab = 'admin' | 'referral' | 'wallet' | 'gigs' | 'chat' | 'seekers';
 
 export default function App() {
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<Tab>('admin');
+  const [activeTab, setActiveTab] = useState<Tab>('gigs');
+  const [activeContactId, setActiveContactId] = useState<string | null>(null);
   const [onlineUsersCount, setOnlineUsersCount] = useState(0);
+  const [profile, setProfile] = useState<{ 
+    id: string; 
+    name: string; 
+    email: string; 
+    status: string; 
+    is_admin: boolean;
+    avatar_url?: string;
+    bio?: string;
+    location?: string;
+    title?: string;
+    phone?: string;
+    website?: string;
+    skills?: string[];
+    pin_code?: string;
+  } | null>(null);
+  const [showMenuDropdown, setShowMenuDropdown] = useState(false);
+  const [showNotificationsDropdown, setShowNotificationsDropdown] = useState(false);
+  const [notifications, setNotifications] = useState<Array<{ id: string; title: string; body: string; time: string; read: boolean }>>([
+    {
+      id: '1',
+      title: 'Welcome to the Platform!',
+      body: 'Get started by creating your gig or exploring active seekers in your area.',
+      time: 'Just now',
+      read: false,
+    },
+    {
+      id: '2',
+      title: 'Profile Status: Active',
+      body: 'Your account is active. To unlock referral rewards, verify your profile with a wallet top-up!',
+      time: '2 hours ago',
+      read: false,
+    },
+    {
+      id: '3',
+      title: 'Pro Tip: Chat Instantly',
+      body: 'You can now coordinate terms and details directly inside the brand-new Chat tab.',
+      time: '1 day ago',
+      read: true,
+    }
+  ]);
+  const [showProfileModal, setShowProfileModal] = useState(false);
+  const [isEditingName, setIsEditingName] = useState(false);
+  const [newName, setNewName] = useState('');
+  const [avatarUrl, setAvatarUrl] = useState('');
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [pinCode, setPinCode] = useState<string>('');
+  const [confirmPin, setConfirmPin] = useState<string>('');
+  const [isProfileLocked, setIsProfileLocked] = useState<boolean>(false);
+  const [enteredPin, setEnteredPin] = useState<string>('');
+  const [showPinSetup, setShowPinSetup] = useState<boolean>(false);
+  const [pinError, setPinError] = useState<string>('');
+  const [bio, setBio] = useState('');
+  const [location, setLocation] = useState('');
+  const [title, setTitle] = useState('');
+  const [phone, setPhone] = useState('');
+  const [website, setWebsite] = useState('');
+  const [skills, setSkills] = useState<string[]>([]);
+  const [savingProfile, setSavingProfile] = useState(false);
+  const [showCelebration, setShowCelebration] = useState(false);
+
+  const fetchProfile = async () => {
+    if (!session) return;
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', session.user.id)
+        .maybeSingle();
+      
+      const localExtra = localStorage.getItem(`profile_extra_${session.user.id}`);
+      const parsedLocal = localExtra ? JSON.parse(localExtra) : {};
+      const fallbackName = parsedLocal.name || session.user.user_metadata?.display_name || (session.user.email ? session.user.email.split('@')[0] : 'User');
+
+      const dbAvatar = data?.avatar_url || parsedLocal.avatar_url || session.user.user_metadata?.avatar_url || '';
+      const dbBio = data?.bio || parsedLocal.bio || session.user.user_metadata?.bio || '';
+      const dbLocation = data?.location || parsedLocal.location || session.user.user_metadata?.location || '';
+      const dbTitle = data?.title || parsedLocal.title || session.user.user_metadata?.title || '';
+      const dbPhone = data?.phone || parsedLocal.phone || session.user.user_metadata?.phone || '';
+      const dbWebsite = data?.website || parsedLocal.website || session.user.user_metadata?.website || '';
+      const dbSkills = data?.skills || parsedLocal.skills || session.user.user_metadata?.skills || [];
+      const dbPin = data?.pin_code || parsedLocal.pin_code || session.user.user_metadata?.pin_code || '';
+
+      setAvatarUrl(dbAvatar);
+      setBio(dbBio);
+      setLocation(dbLocation);
+      setTitle(dbTitle);
+      setPhone(dbPhone);
+      setWebsite(dbWebsite);
+      setSkills(dbSkills);
+      setPinCode(dbPin);
+      setConfirmPin(dbPin);
+
+      if (data) {
+        setProfile({
+          ...data,
+          name: data.name || fallbackName,
+          avatar_url: dbAvatar,
+          bio: dbBio,
+          location: dbLocation,
+          title: dbTitle,
+          phone: dbPhone,
+          website: dbWebsite,
+          skills: dbSkills
+        });
+        setNewName(data.name || fallbackName);
+      } else {
+        // If profile doesn't exist, insert one
+        const { data: newProfile, error: insertError } = await supabase
+          .from('profiles')
+          .insert({
+            id: session.user.id,
+            email: session.user.email,
+            name: fallbackName,
+            status: 'Active',
+            is_admin: false
+          })
+          .select()
+          .single();
+        
+        if (insertError) {
+          console.error('Initial profile insert failed, trying minimal insert:', insertError);
+          const { data: retryProfile, error: retryError } = await supabase
+            .from('profiles')
+            .insert({
+              id: session.user.id,
+              name: fallbackName
+            })
+            .select()
+            .single();
+          
+          if (retryProfile) {
+            setProfile({
+              ...retryProfile,
+              name: retryProfile.name || fallbackName,
+              avatar_url: dbAvatar,
+              bio: dbBio,
+              location: dbLocation,
+              title: dbTitle,
+              phone: dbPhone,
+              website: dbWebsite,
+              skills: dbSkills
+            });
+            setNewName(retryProfile.name || fallbackName);
+          } else {
+            console.error('Minimal insert also failed:', retryError);
+            const fallbackProfile = {
+              id: session.user.id,
+              email: session.user.email || '',
+              name: fallbackName,
+              status: 'Active',
+              is_admin: false,
+              avatar_url: dbAvatar,
+              bio: dbBio,
+              location: dbLocation,
+              title: dbTitle,
+              phone: dbPhone,
+              website: dbWebsite,
+              skills: dbSkills
+            };
+            setProfile(fallbackProfile);
+            setNewName(fallbackProfile.name);
+          }
+        } else if (newProfile) {
+          setProfile({
+            ...newProfile,
+            name: newProfile.name || fallbackName,
+            avatar_url: dbAvatar,
+            bio: dbBio,
+            location: dbLocation,
+            title: dbTitle,
+            phone: dbPhone,
+            website: dbWebsite,
+            skills: dbSkills
+          });
+          setNewName(newProfile.name || fallbackName);
+        }
+      }
+    } catch (e: any) {
+      console.error('Error fetching profile:', e);
+      const localExtra = localStorage.getItem(`profile_extra_${session.user.id}`);
+      const parsedLocal = localExtra ? JSON.parse(localExtra) : {};
+      const fallbackName = parsedLocal.name || session.user.user_metadata?.display_name || (session.user.email ? session.user.email.split('@')[0] : 'User');
+
+      const dbAvatar = parsedLocal.avatar_url || session.user.user_metadata?.avatar_url || '';
+      const dbBio = parsedLocal.bio || session.user.user_metadata?.bio || '';
+      const dbLocation = parsedLocal.location || session.user.user_metadata?.location || '';
+      const dbTitle = parsedLocal.title || session.user.user_metadata?.title || '';
+      const dbPhone = parsedLocal.phone || session.user.user_metadata?.phone || '';
+      const dbWebsite = parsedLocal.website || session.user.user_metadata?.website || '';
+      const dbSkills = parsedLocal.skills || session.user.user_metadata?.skills || [];
+
+      setAvatarUrl(dbAvatar);
+      setBio(dbBio);
+      setLocation(dbLocation);
+      setTitle(dbTitle);
+      setPhone(dbPhone);
+      setWebsite(dbWebsite);
+      setSkills(dbSkills);
+
+      const fallbackProfile = {
+        id: session.user.id,
+        email: session.user.email || '',
+        name: fallbackName,
+        status: 'Active',
+        is_admin: false,
+        avatar_url: dbAvatar,
+        bio: dbBio,
+        location: dbLocation,
+        title: dbTitle,
+        phone: dbPhone,
+        website: dbWebsite,
+        skills: dbSkills
+      };
+      setProfile(fallbackProfile);
+      setNewName(fallbackProfile.name);
+    }
+  };
+
+  useEffect(() => {
+    if (session) {
+      // Set immediate local fallback state so there is zero delay/flash
+      const localExtra = localStorage.getItem(`profile_extra_${session.user.id}`);
+      const parsedLocal = localExtra ? JSON.parse(localExtra) : {};
+      const dbAvatar = parsedLocal.avatar_url || session.user.user_metadata?.avatar_url || '';
+      const dbBio = parsedLocal.bio || session.user.user_metadata?.bio || '';
+      const dbLocation = parsedLocal.location || session.user.user_metadata?.location || '';
+      const dbTitle = parsedLocal.title || session.user.user_metadata?.title || '';
+      const dbPhone = parsedLocal.phone || session.user.user_metadata?.phone || '';
+      const dbWebsite = parsedLocal.website || session.user.user_metadata?.website || '';
+      const dbSkills = parsedLocal.skills || session.user.user_metadata?.skills || [];
+      const dbPin = parsedLocal.pin_code || session.user.user_metadata?.pin_code || '';
+      const defaultName = parsedLocal.name || session.user.user_metadata?.display_name || session.user.email?.split('@')[0] || 'User';
+
+      setProfile({
+        id: session.user.id,
+        email: session.user.email || '',
+        name: defaultName,
+        status: 'Active',
+        is_admin: false,
+        avatar_url: dbAvatar,
+        bio: dbBio,
+        location: dbLocation,
+        title: dbTitle,
+        phone: dbPhone,
+        website: dbWebsite,
+        skills: dbSkills,
+        pin_code: dbPin
+      });
+      setNewName(defaultName);
+      setAvatarUrl(dbAvatar);
+      setBio(dbBio);
+      setLocation(dbLocation);
+      setTitle(dbTitle);
+      setPhone(dbPhone);
+      setWebsite(dbWebsite);
+      setSkills(dbSkills);
+      setPinCode(dbPin);
+      setConfirmPin(dbPin);
+    }
+    fetchProfile();
+  }, [session]);
+
+  useEffect(() => {
+    if (showProfileModal && profile) {
+      setNewName(profile.name || '');
+      setAvatarUrl(profile.avatar_url || '');
+      setBio(profile.bio || '');
+      setLocation(profile.location || '');
+      setTitle(profile.title || '');
+      setPhone(profile.phone || '');
+      setWebsite(profile.website || '');
+      setSkills(profile.skills || []);
+      setPinCode(profile.pin_code || '');
+      setConfirmPin(profile.pin_code || '');
+    }
+  }, [showProfileModal, profile]);
+
+  const handleUpdateProfile = async () => {
+    if (!session || !newName.trim()) return;
+
+    // PIN validation
+    if (pinCode && (pinCode !== confirmPin || pinCode.length !== 5)) {
+      alert('Please enter a valid 5-digit PIN and confirm it.');
+      return;
+    }
+
+    setSavingProfile(true);
+    try {
+      let finalAvatarUrl = avatarUrl;
+
+      if (selectedFile) {
+        // Prepare file path: avatars/uid-timestamp.ext
+        const fileExt = selectedFile.name.split('.').pop();
+        const fileName = `${session.user.id}-${Date.now()}.${fileExt}`;
+        const filePath = fileName;
+
+        // 1. Upload image to Supabase Storage (bucket: 'avatars')
+        const { error: uploadError } = await supabase.storage
+          .from('avatars')
+          .upload(filePath, selectedFile, { 
+            cacheControl: '3600',
+            upsert: true 
+          });
+
+        if (uploadError) {
+          console.error('Upload error:', uploadError);
+          throw uploadError;
+        }
+
+        console.log('Upload success');
+        console.log('Storage path:', filePath);
+
+        // 2. Get public URL
+        const { data: { publicUrl } } = supabase.storage
+          .from('avatars')
+          .getPublicUrl(filePath);
+        
+        finalAvatarUrl = publicUrl;
+        console.log('Generated image URL:', finalAvatarUrl);
+      }
+
+      // 3. Upsert public.profiles (including all fields)
+      // We'll try a full update first, but we'll be careful about fields that might not exist or have constraints
+      const profileUpdate: any = {
+        id: session.user.id,
+        name: newName.trim(),
+        avatar_url: finalAvatarUrl,
+        updated_at: new Date().toISOString(),
+      };
+
+      if (pinCode && pinCode.length === 5) {
+        profileUpdate.pin_code = pinCode;
+      }
+
+      // Only add email if it's available in the session
+      if (session.user.email) {
+        profileUpdate.email = session.user.email;
+      }
+
+      // 3. Update public.profiles (if available)
+      // We wrap this in a way that doesn't block the rest of the update if the table is missing/locked
+      try {
+        const fullUpdateData = {
+          ...profileUpdate,
+          bio,
+          location,
+          title,
+          phone,
+          website,
+          skills,
+        };
+
+        const { error: upsertError } = await supabase
+          .from('profiles')
+          .upsert(fullUpdateData, { onConflict: 'id' });
+
+        if (upsertError) {
+          console.warn('Profiles table update skipped or failed (likely missing table or RLS):', upsertError.message);
+          
+          // Try a minimal retry without non-essential fields
+          const { error: minimalError } = await supabase
+            .from('profiles')
+            .upsert({
+              id: session.user.id,
+              name: newName.trim(),
+              avatar_url: finalAvatarUrl,
+              pin_code: pinCode
+            }, { onConflict: 'id' });
+            
+          if (minimalError) {
+            console.log('Using Auth Metadata and LocalStorage as primary persistence for this session.');
+          }
+        }
+      } catch (dbErr) {
+        console.log('Database table "profiles" is not accessible, using fallbacks.');
+      }
+
+      console.log('Profile persistence synchronized');
+
+      console.log('Database operation completed');
+
+      // 4. Save metadata in User Auth (This is often more reliable than public tables)
+      const authMetadata: any = {
+        display_name: newName.trim(),
+        avatar_url: finalAvatarUrl,
+        bio: bio,
+        location: location,
+        title: title,
+        phone: phone,
+        website: website,
+        skills: skills
+      };
+
+      if (pinCode && pinCode.length === 5) {
+        authMetadata.pin_code = pinCode;
+      }
+
+      const { error: authError } = await supabase.auth.updateUser({
+        data: authMetadata
+      });
+
+      if (authError) {
+        console.error('Auth metadata update error:', authError);
+      }
+
+      // 5. Save to localStorage for instant local retrieval
+      const extraData = {
+        name: newName.trim(),
+        avatar_url: finalAvatarUrl,
+        bio,
+        location,
+        title,
+        phone,
+        website,
+        skills,
+        pin_code: pinCode
+      };
+      localStorage.setItem(`profile_extra_${session.user.id}`, JSON.stringify(extraData));
+
+      // 6. Update local state immediately
+      setAvatarUrl(finalAvatarUrl);
+      setSelectedFile(null);
+      
+      // Lock the profile if a PIN is set
+      if (pinCode && pinCode.length === 5) {
+        setIsProfileLocked(true);
+        setEnteredPin('');
+      }
+
+      // 7. Reload the user's profile immediately
+      await fetchProfile();
+
+      // 8. Show congratulations celebration!
+      setShowCelebration(true);
+    } catch (e: any) {
+      console.error('Error updating profile:', e);
+      alert('Could not update profile. Some changes may be saved locally.');
+    } finally {
+      setSavingProfile(false);
+    }
+  };
+
+  const handleDirectToChat = async (contactId: string, starterMessage: string) => {
+    if (!session?.user?.id) return;
+    const currentUserId = session.user.id;
+    try {
+      await ensureFriendship(currentUserId, contactId);
+      sendLocalMessage(currentUserId, contactId, starterMessage);
+      setActiveContactId(contactId);
+      setActiveTab('chat');
+    } catch (err: any) {
+      console.error('Detailed Error routing to chat:', {
+        message: err?.message || 'Unknown error',
+        code: err?.code || 'N/A',
+        details: err?.details || '',
+        hint: err?.hint || '',
+        fullError: err
+      });
+    }
+  };
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -70,101 +534,898 @@ export default function App() {
   return (
     <div className="min-h-screen bg-gray-50 text-gray-900 font-sans flex flex-col">
       {/* Top Bar */}
-      <header className="bg-white border-b border-gray-200 sticky top-0 z-10">
+      <header className="bg-white border-b border-gray-200 sticky top-0 z-10 w-full">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex h-16 justify-between items-center">
-            <div className="flex space-x-4 sm:space-x-8 h-full overflow-x-auto no-scrollbar flex-1 mr-4">
-              <button
-                onClick={() => setActiveTab('admin')}
-                title="Admin"
-                className={`inline-flex items-center px-2 pt-1 border-b-2 text-sm font-medium transition-colors ${
-                  activeTab === 'admin'
-                    ? 'border-blue-500 text-blue-600'
-                    : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700'
-                }`}
-              >
-                <Shield className="w-5 h-5" />
-              </button>
+            {/* Left Nav Tabs */}
+            <div className="flex items-center justify-between sm:justify-start sm:space-x-4 md:space-x-6 flex-1 mr-4 sm:mr-6 overflow-x-auto no-scrollbar">
               <button
                 onClick={() => setActiveTab('referral')}
                 title="Referral Program"
-                className={`inline-flex items-center px-2 pt-1 border-b-2 text-sm font-medium transition-colors ${
+                className={`transition-all duration-300 focus:outline-none flex flex-col items-center justify-center flex-1 sm:flex-initial shrink-0 relative px-3 py-1 h-12 rounded-xl ${
                   activeTab === 'referral'
-                    ? 'border-green-500 text-green-600'
-                    : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700'
+                    ? 'text-green-600 font-semibold bg-green-50/30'
+                    : 'text-gray-400 hover:text-gray-700 hover:bg-gray-50/50'
                 }`}
               >
-                <Gift className="w-5 h-5" />
+                <Gift className="w-5 h-5 transition-transform duration-300" />
+                {activeTab === 'referral' && (
+                  <motion.span
+                    initial={{ opacity: 0, y: -2 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="text-[9px] font-bold tracking-wide mt-1 leading-none select-none"
+                  >
+                    Referrals
+                  </motion.span>
+                )}
               </button>
-              <button
-                onClick={() => setActiveTab('wallet')}
-                title="Wallet"
-                className={`inline-flex items-center px-2 pt-1 border-b-2 text-sm font-medium transition-colors ${
-                  activeTab === 'wallet'
-                    ? 'border-purple-500 text-purple-600'
-                    : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700'
-                }`}
-              >
-                <Wallet className="w-5 h-5" />
-              </button>
+
               <button
                 onClick={() => setActiveTab('gigs')}
-                title="GiGs"
-                className={`inline-flex items-center px-2 pt-1 border-b-2 text-sm font-medium transition-colors ${
+                title="Gigs"
+                className={`transition-all duration-300 focus:outline-none flex flex-col items-center justify-center flex-1 sm:flex-initial shrink-0 relative px-3 py-1 h-12 rounded-xl ${
                   activeTab === 'gigs'
-                    ? 'border-indigo-500 text-indigo-600'
-                    : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700'
+                    ? 'text-indigo-600 font-semibold bg-indigo-50/30'
+                    : 'text-gray-400 hover:text-gray-700 hover:bg-gray-50/50'
                 }`}
               >
-                <Briefcase className="w-5 h-5" />
+                <Briefcase className="w-5 h-5 transition-transform duration-300" />
+                {activeTab === 'gigs' && (
+                  <motion.span
+                    initial={{ opacity: 0, y: -2 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="text-[9px] font-bold tracking-wide mt-1 leading-none select-none"
+                  >
+                    Gigs
+                  </motion.span>
+                )}
               </button>
+
               <button
                 onClick={() => setActiveTab('chat')}
                 title="Chat"
-                className={`inline-flex items-center px-2 pt-1 border-b-2 text-sm font-medium transition-colors ${
+                className={`transition-all duration-300 focus:outline-none flex flex-col items-center justify-center flex-1 sm:flex-initial shrink-0 relative px-3 py-1 h-12 rounded-xl ${
                   activeTab === 'chat'
-                    ? 'border-pink-500 text-pink-600'
-                    : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700'
+                    ? 'text-pink-600 font-semibold bg-pink-50/30'
+                    : 'text-gray-400 hover:text-gray-700 hover:bg-gray-50/50'
                 }`}
               >
-                <MessageSquare className="w-5 h-5" />
+                <MessageSquare className="w-5 h-5 transition-transform duration-300" />
+                {activeTab === 'chat' && (
+                  <motion.span
+                    initial={{ opacity: 0, y: -2 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="text-[9px] font-bold tracking-wide mt-1 leading-none select-none"
+                  >
+                    Chat
+                  </motion.span>
+                )}
               </button>
+
               <button
                 onClick={() => setActiveTab('seekers')}
                 title="Seekers"
-                className={`inline-flex items-center px-2 pt-1 border-b-2 text-sm font-medium transition-colors ${
+                className={`transition-all duration-300 focus:outline-none flex flex-col items-center justify-center flex-1 sm:flex-initial shrink-0 relative px-3 py-1 h-12 rounded-xl ${
                   activeTab === 'seekers'
-                    ? 'border-orange-500 text-orange-600'
-                    : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700'
+                    ? 'text-orange-600 font-semibold bg-orange-50/30'
+                    : 'text-gray-400 hover:text-gray-700 hover:bg-gray-50/50'
                 }`}
               >
-                <Search className="w-5 h-5" />
+                <Search className="w-5 h-5 transition-transform duration-300" />
+                {activeTab === 'seekers' && (
+                  <motion.span
+                    initial={{ opacity: 0, y: -2 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="text-[9px] font-bold tracking-wide mt-1 leading-none select-none"
+                  >
+                    Seekers
+                  </motion.span>
+                )}
               </button>
             </div>
-            <div>
-              <button
-                onClick={() => supabase.auth.signOut()}
-                title="Sign Out"
-                className="inline-flex items-center p-2 border border-transparent text-sm font-medium rounded-full text-gray-500 hover:text-gray-700 hover:bg-gray-100 transition-colors"
-              >
-                <LogOut className="w-5 h-5" />
-              </button>
+
+            {/* Right Controls with Online status & 3-dot menu */}
+            <div className="flex items-center space-x-4 shrink-0">
+              {/* Online Users Count */}
+              <div className="hidden sm:flex items-center space-x-1.5 text-xs text-gray-500 bg-gray-100 px-2.5 py-1 rounded-full border border-gray-200 relative">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping shrink-0" />
+                <span className="w-2 h-2 rounded-full bg-emerald-500 absolute shrink-0" />
+                <span className="pl-3 font-semibold text-gray-600">{onlineUsersCount} online</span>
+              </div>
+
+              {/* Notification Bell */}
+              <div className="relative">
+                <button
+                  onClick={() => {
+                    setShowNotificationsDropdown(!showNotificationsDropdown);
+                    setShowMenuDropdown(false);
+                  }}
+                  className="p-2 rounded-xl text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-all duration-300 focus:outline-none flex items-center justify-center shrink-0 relative"
+                  title="Notifications"
+                >
+                  <Bell className="w-5 h-5" />
+                  {notifications.some(n => !n.read) && (
+                    <span className="absolute top-1 right-1 w-2.5 h-2.5 rounded-full bg-rose-500 border border-white" />
+                  )}
+                </button>
+
+                <AnimatePresence>
+                  {showNotificationsDropdown && (
+                    <>
+                      {/* Backdrop to close */}
+                      <div 
+                        className="fixed inset-0 z-20" 
+                        onClick={() => setShowNotificationsDropdown(false)} 
+                      />
+                      
+                      <motion.div
+                        initial={{ opacity: 0, scale: 0.95, y: 10 }}
+                        animate={{ opacity: 1, scale: 1, y: 0 }}
+                        exit={{ opacity: 0, scale: 0.95, y: 10 }}
+                        className="absolute right-0 mt-2 w-80 bg-white rounded-xl shadow-xl border border-gray-100 z-30 overflow-hidden text-gray-900"
+                      >
+                        <div className="p-3.5 border-b border-gray-100 flex items-center justify-between">
+                          <span className="text-xs font-bold text-gray-900 uppercase tracking-wider">Notifications</span>
+                          {notifications.some(n => !n.read) && (
+                            <button 
+                              onClick={() => {
+                                setNotifications(notifications.map(n => ({ ...n, read: true })));
+                              }}
+                              className="text-[10px] font-semibold text-indigo-600 hover:underline hover:text-indigo-700"
+                            >
+                              Mark all as read
+                            </button>
+                          )}
+                        </div>
+                        <div className="max-h-80 overflow-y-auto divide-y divide-gray-50">
+                          {notifications.map((n) => (
+                            <div 
+                              key={n.id} 
+                              onClick={() => {
+                                setNotifications(notifications.map(notif => notif.id === n.id ? { ...notif, read: true } : notif));
+                              }}
+                              className={`p-3.5 hover:bg-gray-50/50 cursor-pointer transition-colors flex gap-2.5 items-start ${!n.read ? 'bg-indigo-50/30' : ''}`}
+                            >
+                              <div className="mt-1 shrink-0">
+                                <div className={`w-2 h-2 rounded-full ${!n.read ? 'bg-indigo-600' : 'bg-transparent'}`} />
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <p className={`text-xs text-gray-900 truncate ${!n.read ? 'font-bold' : 'font-medium'}`}>{n.title}</p>
+                                <p className="text-[11px] text-gray-500 mt-0.5 leading-relaxed break-words">{n.body}</p>
+                                <span className="text-[9px] text-gray-400 font-semibold block mt-1">{n.time}</span>
+                              </div>
+                            </div>
+                          ))}
+                          {notifications.length === 0 && (
+                            <div className="p-6 text-center text-gray-400 text-xs">
+                              No notifications yet.
+                            </div>
+                          )}
+                        </div>
+                      </motion.div>
+                    </>
+                  )}
+                </AnimatePresence>
+              </div>
+
+              {/* 3-dot Menu dropdown with user profile avatar */}
+              <div className="relative">
+                <button
+                  onClick={() => {
+                    setShowMenuDropdown(!showMenuDropdown);
+                    setShowNotificationsDropdown(false);
+                  }}
+                  className="flex items-center space-x-1.5 p-1 pr-2 rounded-full border border-gray-100 hover:border-gray-200 bg-white hover:bg-gray-50 transition-all duration-300 focus:outline-none shrink-0 shadow-xs"
+                  title="Account Menu"
+                >
+                  <div className="w-8 h-8 rounded-full overflow-hidden bg-gradient-to-tr from-indigo-500 to-blue-600 flex items-center justify-center text-white shrink-0 shadow-xs border border-white">
+                    {(showProfileModal ? avatarUrl : profile?.avatar_url) ? (
+                      <img src={showProfileModal ? avatarUrl : profile.avatar_url} alt="Avatar" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                    ) : (
+                      <User className="w-4.5 h-4.5 text-white" />
+                    )}
+                  </div>
+                  <MoreVertical className="w-4 h-4 text-gray-400 hover:text-gray-600 transition-colors" />
+                </button>
+
+                <AnimatePresence>
+                  {showMenuDropdown && (
+                    <>
+                      {/* Backdrop to close */}
+                      <div 
+                        className="fixed inset-0 z-20" 
+                        onClick={() => setShowMenuDropdown(false)} 
+                      />
+                      
+                      <motion.div
+                        initial={{ opacity: 0, scale: 0.95, y: 10 }}
+                        animate={{ opacity: 1, scale: 1, y: 0 }}
+                        exit={{ opacity: 0, scale: 0.95, y: 10 }}
+                        className="absolute right-0 mt-2 w-64 bg-white rounded-xl shadow-xl border border-gray-100 z-30 overflow-hidden text-gray-900"
+                      >
+                        {/* User Header Info inside dropdown */}
+                        <div className="p-3 bg-gray-50/50 border-b border-gray-100 flex items-center space-x-3">
+                          <div className="w-10 h-10 rounded-full overflow-hidden bg-gradient-to-tr from-indigo-500 to-blue-600 flex items-center justify-center text-white font-bold text-sm shrink-0 border border-white shadow-xs">
+                            {profile?.avatar_url ? (
+                              <img src={profile.avatar_url} alt="Avatar" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                            ) : (
+                              profile?.name ? profile.name.substring(0, 2).toUpperCase() : <User className="w-5 h-5 text-white" />
+                            )}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm font-bold text-gray-900 truncate">{profile?.name || 'User'}</p>
+                            <p className="text-[11px] text-gray-500 truncate">{profile?.email}</p>
+                          </div>
+                        </div>
+
+                        <div className="p-2">
+                          {/* Admin Panel Link */}
+                          <button
+                            onClick={() => {
+                              setActiveTab('admin');
+                              setShowMenuDropdown(false);
+                            }}
+                            className={`w-full flex items-center space-x-2.5 px-3 py-2.5 text-sm rounded-lg transition-colors text-left font-medium ${
+                              activeTab === 'admin'
+                                ? 'bg-blue-50 text-blue-600 font-bold'
+                                : 'text-gray-700 hover:bg-indigo-50 hover:text-indigo-600'
+                            }`}
+                          >
+                            <Shield className={`w-4 h-4 ${activeTab === 'admin' ? 'text-blue-500' : 'text-gray-400'}`} />
+                            <span>Admin Panel</span>
+                          </button>
+
+                          {/* Wallet Link */}
+                          <button
+                            onClick={() => {
+                              setActiveTab('wallet');
+                              setShowMenuDropdown(false);
+                            }}
+                            className={`w-full flex items-center space-x-2.5 px-3 py-2.5 text-sm rounded-lg transition-colors text-left font-medium ${
+                              activeTab === 'wallet'
+                                ? 'bg-purple-50 text-purple-600 font-bold'
+                                : 'text-gray-700 hover:bg-indigo-50 hover:text-indigo-600'
+                            }`}
+                          >
+                            <Wallet className={`w-4 h-4 ${activeTab === 'wallet' ? 'text-purple-500' : 'text-gray-400'}`} />
+                            <span>Wallet</span>
+                          </button>
+
+                          <div className="border-t border-gray-100 my-1"></div>
+
+                          {/* User Profile */}
+                          <button
+                            onClick={() => {
+                              if (pinCode) {
+                                setIsProfileLocked(true);
+                                setEnteredPin('');
+                              }
+                              setShowProfileModal(true);
+                              setShowMenuDropdown(false);
+                            }}
+                            className="w-full flex items-center space-x-2.5 px-3 py-2.5 text-sm text-gray-700 hover:bg-indigo-50 hover:text-indigo-600 rounded-lg transition-colors text-left font-medium"
+                          >
+                            <User className="w-4 h-4 text-gray-400" />
+                            <span>User Profile</span>
+                          </button>
+                          
+                          <div className="border-t border-gray-100 my-1"></div>
+                          
+                          {/* Logout */}
+                          <button
+                            onClick={async () => {
+                              try {
+                                await supabase.auth.signOut();
+                                setShowMenuDropdown(false);
+                              } catch (err: any) {
+                                console.error('Detailed Error during logout:', {
+                                  message: err?.message || 'Unknown error',
+                                  code: err?.code || 'N/A',
+                                  details: err?.details || '',
+                                  hint: err?.hint || '',
+                                  fullError: err
+                                });
+                              }
+                            }}
+                            className="w-full flex items-center space-x-2.5 px-3 py-2.5 text-sm text-rose-600 hover:bg-rose-50 rounded-lg transition-colors text-left font-medium"
+                          >
+                            <LogOut className="w-4 h-4 text-rose-400" />
+                            <span>Logout</span>
+                          </button>
+                        </div>
+                      </motion.div>
+                    </>
+                  )}
+                </AnimatePresence>
+              </div>
             </div>
           </div>
         </div>
       </header>
 
       {/* Main Content */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <main className={`flex-1 w-full mx-auto min-h-0 ${activeTab === 'chat' ? 'w-full h-[calc(100vh-4rem)] flex flex-col overflow-hidden' : 'max-w-7xl px-4 sm:px-6 lg:px-8 py-8'}`}>
         <AnimatePresence mode="wait">
           {activeTab === 'admin' && <AdminView key="admin" onlineUsersCount={onlineUsersCount} />}
           {activeTab === 'referral' && <ReferralView key="referral" userId={session.user.id} />}
           {activeTab === 'wallet' && <WalletView key="wallet" userId={session.user.id} />}
-          {activeTab === 'gigs' && <GigsView key="gigs" />}
-          {activeTab === 'chat' && <ChatView key="chat" />}
-          {activeTab === 'seekers' && <SeekersView key="seekers" />}
+          {activeTab === 'gigs' && <GigsView key="gigs" onDirectToChat={handleDirectToChat} />}
+          {activeTab === 'chat' && (
+            <ChatView 
+              key="chat" 
+              userId={session.user.id} 
+              activeContactId={activeContactId} 
+              setActiveContactId={setActiveContactId} 
+            />
+          )}
+          {activeTab === 'seekers' && <SeekersView key="seekers" onDirectToChat={handleDirectToChat} />}
         </AnimatePresence>
       </main>
+
+      {/* Profile Modal */}
+      <AnimatePresence>
+        {showProfileModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 overflow-y-auto">
+            {/* Backdrop */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => {
+                setShowProfileModal(false);
+                setIsEditingName(false);
+              }}
+              className="fixed inset-0 bg-black/60 backdrop-blur-sm"
+            />
+
+            {/* Modal Box */}
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="relative w-full max-w-lg bg-white rounded-2xl shadow-2xl border border-gray-100 overflow-hidden text-gray-900 z-10 my-8 flex flex-col max-h-[90vh]"
+            >
+              {/* Header */}
+              <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 bg-gray-50/50">
+                <div className="flex items-center space-x-2">
+                  <div className="p-1.5 bg-indigo-50 rounded-lg text-indigo-600">
+                    <User className="w-5 h-5" />
+                  </div>
+                  <h3 className="text-lg font-bold text-gray-900">Configure Your Profile</h3>
+                </div>
+                {isProfileLocked && pinCode ? null : (
+                <button
+                  onClick={() => {
+                    setShowProfileModal(false);
+                    setIsEditingName(false);
+                  }}
+                  className="p-1.5 rounded-full text-gray-400 hover:bg-gray-100 hover:text-gray-700 transition-colors"
+                >
+                  <span className="sr-only">Close</span>
+                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+                )}
+              </div>
+
+              {/* Scrollable Body */}
+              <div className="p-6 overflow-y-auto space-y-6 flex-1 relative">
+                {isProfileLocked && pinCode && (
+                  <motion.div 
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    className="absolute inset-0 z-20 bg-white/95 backdrop-blur-md flex flex-col items-center justify-center p-8 text-center"
+                  >
+                    <div className="w-16 h-16 bg-amber-100 rounded-full flex items-center justify-center mb-4 text-amber-600">
+                      <Lock className="w-8 h-8" />
+                    </div>
+                    <h4 className="text-xl font-bold text-gray-900 mb-2">Profile Locked</h4>
+                    <p className="text-sm text-gray-500 mb-6">Enter your 5-digit PIN to access your profile settings.</p>
+                    
+                    <div className="space-y-4 w-full max-w-[200px]">
+                      <input
+                        type="password"
+                        inputMode="numeric"
+                        maxLength={5}
+                        placeholder="•••••"
+                        autoFocus
+                        value={enteredPin}
+                        onChange={(e) => {
+                          const val = e.target.value.replace(/\D/g, '');
+                          setEnteredPin(val);
+                          if (val.length === 5) {
+                            if (val === pinCode) {
+                              setIsProfileLocked(false);
+                              setPinError('');
+                            } else {
+                              setPinError('Incorrect PIN');
+                              setTimeout(() => setEnteredPin(''), 500);
+                            }
+                          }
+                        }}
+                        className={`w-full px-4 py-3 text-2xl border ${pinError ? 'border-rose-500 bg-rose-50' : 'border-gray-200'} rounded-2xl focus:outline-none focus:ring-4 focus:ring-indigo-100 text-center font-mono tracking-[0.5em] transition-all`}
+                      />
+                      {pinError && <p className="text-xs font-bold text-rose-500">{pinError}</p>}
+                      
+                      <button
+                        onClick={() => {
+                          setPinCode('');
+                          setConfirmPin('');
+                          setIsProfileLocked(false);
+                          setEnteredPin('');
+                          setPinError('');
+                        }}
+                        className="text-sm text-gray-400 hover:text-gray-600 font-medium hover:underline"
+                      >
+                        Forgot PIN?
+                      </button>
+                      
+                      <button
+                        onClick={() => setShowProfileModal(false)}
+                        className="text-xs text-gray-400 hover:text-gray-500 font-medium hover:underline block mx-auto mt-2"
+                      >
+                        Go back
+                      </button>
+                    </div>
+                  </motion.div>
+                )}
+                {/* 1. Profile Picture & Name */}
+                <div className="flex flex-col md:flex-row items-center gap-6 pb-6 border-b border-gray-100">
+                  {/* Image Uploader & Drag/Drop */}
+                  <div className="flex flex-col items-center space-y-2">
+                    <div 
+                      onDragEnter={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                      onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                      onDragLeave={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                      onDrop={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+                          const file = e.dataTransfer.files[0];
+                          setSelectedFile(file);
+                          const reader = new FileReader();
+                          reader.onloadstart = () => {
+                            // Could add a loading state here if needed
+                          };
+                          reader.onloadend = () => {
+                            setAvatarUrl(reader.result as string);
+                          };
+                          reader.readAsDataURL(file);
+                        }
+                      }}
+                      onClick={() => document.getElementById('avatar-file-input')?.click()}
+                      className="w-24 h-24 rounded-full border-2 border-dashed border-gray-300 hover:border-indigo-500 bg-gray-50 flex flex-col items-center justify-center cursor-pointer overflow-hidden relative group transition-all shrink-0 shadow-sm"
+                      title="Click or drag image to upload"
+                    >
+                      {avatarUrl ? (
+                        <>
+                          <img src={avatarUrl} alt="Avatar" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                          <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                            <Camera className="w-6 h-6 text-white" />
+                          </div>
+                          <div className="absolute top-1 right-1 bg-indigo-600 rounded-full p-1 shadow-lg transform scale-0 group-hover:scale-100 transition-transform">
+                            <ImageIcon className="w-3 h-3 text-white" />
+                          </div>
+                        </>
+                      ) : (
+                        <div className="flex flex-col items-center justify-center p-2 text-center text-gray-400">
+                          <Camera className="w-6 h-6 text-gray-400 mb-1" />
+                          <span className="text-[10px] font-semibold">Upload Photo</span>
+                        </div>
+                      )}
+                      
+                      {profile?.status === 'Verified' && (
+                        <span className="absolute bottom-0 right-0 bg-green-500 border-2 border-white rounded-full p-0.5" title="Verified Account">
+                          <ShieldCheck className="w-4 h-4 text-white" />
+                        </span>
+                      )}
+                    </div>
+
+                    {avatarUrl && (
+                      <div className="flex flex-col items-center space-y-1 mt-2">
+                        <div className="flex items-center space-x-2 px-2 py-1 bg-indigo-50 rounded-full border border-indigo-100 animate-pulse mb-1">
+                          <div className="w-1.5 h-1.5 bg-indigo-600 rounded-full"></div>
+                          <span className="text-[9px] font-bold text-indigo-700 uppercase tracking-tight">Live Preview Active</span>
+                        </div>
+                        <div className="flex items-center space-x-2 p-1.5 rounded-lg bg-gray-50 border border-gray-100">
+                          <span className="text-[10px] text-gray-400 font-medium px-1">Menu:</span>
+                          <div className="w-6 h-6 rounded-full overflow-hidden bg-indigo-100 flex items-center justify-center border border-white shadow-sm">
+                             <img src={avatarUrl} alt="Preview" className="w-full h-full object-cover" />
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                    
+                    <input 
+                      type="file" 
+                      id="avatar-file-input" 
+                      className="hidden" 
+                      accept="image/*" 
+                      onChange={(e) => {
+                        if (e.target.files && e.target.files[0]) {
+                          const file = e.target.files[0];
+                          setSelectedFile(file);
+                          const reader = new FileReader();
+                          reader.onloadend = () => {
+                            setAvatarUrl(reader.result as string);
+                          };
+                          reader.readAsDataURL(file);
+                        }
+                      }}
+                    />
+
+                    {avatarUrl && (
+                      <button 
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setAvatarUrl('');
+                          setSelectedFile(null);
+                        }}
+                        className="text-[10px] text-rose-500 hover:text-rose-700 hover:underline font-semibold flex items-center space-x-1"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                        <span>Remove Photo</span>
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Name field */}
+                  <div className="flex-1 w-full space-y-1.5">
+                    <label className="block text-xs font-bold text-gray-600 uppercase tracking-wide">Display Name</label>
+                    <div className="flex items-center space-x-2">
+                      <input
+                        type="text"
+                        value={newName}
+                        onChange={(e) => setNewName(e.target.value)}
+                        className="w-full px-3.5 py-2.5 text-sm border border-gray-200 hover:border-gray-300 focus:border-indigo-500 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-100 bg-white text-gray-900 transition-all font-medium"
+                        placeholder="Your name"
+                        maxLength={30}
+                      />
+                    </div>
+                    <p className="text-[11px] text-gray-400 font-medium">Your email address: <span className="text-gray-500">{profile?.email}</span></p>
+                  </div>
+                </div>
+
+                {/* 2. Professional Details */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-1.5">
+                    <label className="block text-xs font-bold text-gray-600 uppercase tracking-wide flex items-center space-x-1">
+                      <Briefcase className="w-3.5 h-3.5 text-gray-400" />
+                      <span>Professional Title</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={title}
+                      onChange={(e) => setTitle(e.target.value)}
+                      className="w-full px-3.5 py-2.5 text-sm border border-gray-200 hover:border-gray-300 focus:border-indigo-500 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-100 bg-white text-gray-900 transition-all"
+                      placeholder="e.g. Expert Painter, Electrician, Designer"
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="block text-xs font-bold text-gray-600 uppercase tracking-wide flex items-center space-x-1">
+                      <MapPin className="w-3.5 h-3.5 text-gray-400" />
+                      <span>Location</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={location}
+                      onChange={(e) => setLocation(e.target.value)}
+                      className="w-full px-3.5 py-2.5 text-sm border border-gray-200 hover:border-gray-300 focus:border-indigo-500 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-100 bg-white text-gray-900 transition-all"
+                      placeholder="e.g. Cape Town, Western Cape"
+                    />
+                  </div>
+                </div>
+
+                {/* 3. Bio */}
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-bold text-gray-600 uppercase tracking-wide">Short Bio</label>
+                  <textarea
+                    value={bio}
+                    onChange={(e) => setBio(e.target.value)}
+                    rows={3}
+                    maxLength={200}
+                    className="w-full px-3.5 py-2.5 text-sm border border-gray-200 hover:border-gray-300 focus:border-indigo-500 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-100 bg-white text-gray-900 transition-all resize-none"
+                    placeholder="Tell other members a little bit about yourself, your experience, or what services you offer..."
+                  />
+                  <div className="flex justify-end">
+                    <span className="text-[10px] text-gray-400 font-medium">{bio.length}/200 characters</span>
+                  </div>
+                </div>
+
+                {/* 4. Contact Fields */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-1.5">
+                    <label className="block text-xs font-bold text-gray-600 uppercase tracking-wide flex items-center space-x-1">
+                      <Phone className="w-3.5 h-3.5 text-gray-400" />
+                      <span>Phone Number</span>
+                    </label>
+                    <input
+                      type="tel"
+                      value={phone}
+                      onChange={(e) => setPhone(e.target.value)}
+                      className="w-full px-3.5 py-2.5 text-sm border border-gray-200 hover:border-gray-300 focus:border-indigo-500 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-100 bg-white text-gray-900 transition-all"
+                      placeholder="e.g. +27 82 123 4567"
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="block text-xs font-bold text-gray-600 uppercase tracking-wide flex items-center space-x-1">
+                      <Globe className="w-3.5 h-3.5 text-gray-400" />
+                      <span>Website / Portfolio</span>
+                    </label>
+                    <input
+                      type="url"
+                      value={website}
+                      onChange={(e) => setWebsite(e.target.value)}
+                      className="w-full px-3.5 py-2.5 text-sm border border-gray-200 hover:border-gray-300 focus:border-indigo-500 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-100 bg-white text-gray-900 transition-all"
+                      placeholder="e.g. https://myportfolio.com"
+                    />
+                  </div>
+                </div>
+
+                {/* 5. Skills Input with tags */}
+                <div className="space-y-2">
+                  <label className="block text-xs font-bold text-gray-600 uppercase tracking-wide flex items-center space-x-1">
+                    <Award className="w-3.5 h-3.5 text-gray-400" />
+                    <span>Skills / Keywords (Comma-separated)</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={typeof skills === 'string' ? skills : skills.join(', ')}
+                    onChange={(e) => {
+                      const list = e.target.value;
+                      // Keep it as a parsed array
+                      const parsed = list.split(',').map(s => s.trim()).filter(s => s.length > 0);
+                      setSkills(parsed);
+                    }}
+                    className="w-full px-3.5 py-2.5 text-sm border border-gray-200 hover:border-gray-300 focus:border-indigo-500 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-100 bg-white text-gray-900 transition-all"
+                    placeholder="e.g. Carpentry, Plumbing, House Painting"
+                  />
+                  
+                  {/* Skill tags list */}
+                  {skills.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5 pt-1">
+                      {skills.map((skill, index) => (
+                        <span 
+                          key={index} 
+                          className="inline-flex items-center text-xs font-semibold bg-indigo-50 text-indigo-700 px-2.5 py-1 rounded-full border border-indigo-100"
+                        >
+                          {skill}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* 6. PIN Lock Setup */}
+                <div className="space-y-4 p-4 bg-amber-50/50 border border-amber-100 rounded-xl">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center space-x-2">
+                      <Lock className="w-4 h-4 text-amber-600" />
+                      <h4 className="text-sm font-bold text-amber-800">Security PIN Lock</h4>
+                    </div>
+                    {pinCode && (
+                      <button
+                        onClick={() => {
+                          setPinCode('');
+                          setConfirmPin('');
+                        }}
+                        className="text-[10px] font-bold text-rose-600 hover:text-rose-700 uppercase tracking-wider"
+                      >
+                        Clear PIN
+                      </button>
+                    )}
+                  </div>
+                  <p className="text-[11px] text-amber-700 leading-relaxed">
+                    Set a 5-digit PIN to lock your profile. You will be prompted for this PIN whenever you try to access or modify your profile details after saving.
+                  </p>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-1.5">
+                      <label className="block text-[10px] font-bold text-amber-700 uppercase tracking-wide">Enter 5-Digit PIN</label>
+                      <input
+                        type="password"
+                        inputMode="numeric"
+                        maxLength={5}
+                        placeholder="00000"
+                        value={pinCode}
+                        onChange={(e) => {
+                          const val = e.target.value.replace(/\D/g, '');
+                          setPinCode(val);
+                        }}
+                        className="w-full px-3.5 py-2.5 text-sm border border-amber-200 focus:border-amber-500 rounded-xl focus:outline-none focus:ring-2 focus:ring-amber-100 bg-white text-gray-900 transition-all font-mono tracking-[0.5em] text-center"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="block text-[10px] font-bold text-amber-700 uppercase tracking-wide">Confirm PIN</label>
+                      <input
+                        type="password"
+                        inputMode="numeric"
+                        maxLength={5}
+                        placeholder="00000"
+                        value={confirmPin}
+                        onChange={(e) => {
+                          const val = e.target.value.replace(/\D/g, '');
+                          setConfirmPin(val);
+                        }}
+                        className="w-full px-3.5 py-2.5 text-sm border border-amber-200 focus:border-amber-500 rounded-xl focus:outline-none focus:ring-2 focus:ring-amber-100 bg-white text-gray-900 transition-all font-mono tracking-[0.5em] text-center"
+                      />
+                    </div>
+                  </div>
+                  {pinCode && confirmPin && pinCode !== confirmPin && (
+                    <p className="text-[10px] text-rose-500 font-bold">PINs do not match!</p>
+                  )}
+                  {pinCode && pinCode.length !== 5 && (
+                    <p className="text-[10px] text-amber-600 font-medium">PIN must be exactly 5 digits.</p>
+                  )}
+                </div>
+
+                {/* Account Status Card */}
+                <div className="p-4 bg-gray-50 border border-gray-100 rounded-xl">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-semibold text-gray-500">Account Tier</span>
+                    <span className={`inline-flex items-center space-x-1 px-3 py-1 rounded-full text-xs font-bold ${
+                      profile?.status === 'Verified'
+                        ? 'bg-green-50 text-green-700 border border-green-200 shadow-xs'
+                        : 'bg-indigo-50 text-indigo-700 border border-indigo-100'
+                    }`}>
+                      <ShieldCheck className="w-4 h-4" />
+                      <span>{profile?.status || 'Active'}</span>
+                    </span>
+                  </div>
+                  {profile?.status !== 'Verified' && (
+                    <p className="text-xs text-gray-500 mt-2.5 leading-relaxed text-left">
+                      Top up <strong className="font-semibold text-indigo-600">R20</strong> or more in the Wallet to verify your account and unlock referral rewards.
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              {/* Footer Actions */}
+              <div className="px-6 py-4 bg-gray-50 border-t border-gray-100 flex items-center justify-end space-x-3 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowProfileModal(false);
+                    setIsEditingName(false);
+                  }}
+                  className="px-4.5 py-2 bg-white hover:bg-gray-50 text-gray-700 border border-gray-200 text-sm font-semibold rounded-xl shadow-xs transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleUpdateProfile}
+                  disabled={savingProfile || !newName.trim() || (pinCode !== confirmPin && pinCode.length > 0) || (pinCode.length > 0 && pinCode.length !== 5)}
+                  className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white rounded-xl text-sm font-semibold shadow-md shadow-indigo-200 hover:shadow-lg transition-all flex items-center space-x-2"
+                >
+                  {savingProfile ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span>Saving...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Check className="w-4 h-4" />
+                      <span>Save Changes</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Celebration Modal (Success Alert Screen) */}
+      <AnimatePresence>
+        {showCelebration && (
+          <div className="fixed inset-0 z-55 flex items-center justify-center p-4">
+            {/* Dark blur backdrop */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => {
+                setShowCelebration(false);
+                setShowProfileModal(false);
+              }}
+              className="fixed inset-0 bg-slate-900/70 backdrop-blur-md"
+            />
+
+            {/* Confetti & Congratulations Card */}
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9, rotate: -2, y: 50 }}
+              animate={{ opacity: 1, scale: 1, rotate: 0, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, rotate: 2, y: 50 }}
+              transition={{ type: "spring", damping: 15, stiffness: 100 }}
+              className="relative w-full max-w-md bg-white rounded-3xl shadow-2xl border border-gray-100 overflow-hidden text-gray-950 z-10 p-8 text-center flex flex-col items-center"
+            >
+              {/* Confetti elements built with pure motion elements */}
+              <div className="absolute inset-0 pointer-events-none overflow-hidden">
+                {[...Array(20)].map((_, i) => {
+                  const colors = ['bg-indigo-500', 'bg-emerald-500', 'bg-amber-500', 'bg-rose-500', 'bg-sky-500', 'bg-violet-500'];
+                  const colorClass = colors[i % colors.length];
+                  const xStart = Math.random() * 300 - 150;
+                  const yStart = Math.random() * -100 - 50;
+                  const delay = Math.random() * 0.5;
+                  return (
+                    <motion.div
+                      key={i}
+                      initial={{ x: xStart, y: yStart, opacity: 1, scale: Math.random() * 0.5 + 0.5, rotate: 0 }}
+                      animate={{ 
+                        y: 500, 
+                        opacity: 0, 
+                        rotate: Math.random() * 720, 
+                        x: xStart + (Math.random() * 200 - 100) 
+                      }}
+                      transition={{ duration: 2.5, delay, repeat: Infinity, repeatType: "loop" }}
+                      className={`absolute w-3.5 h-3.5 rounded-sm ${colorClass}`}
+                      style={{ top: "10%" }}
+                    />
+                  );
+                })}
+              </div>
+
+              {/* Celebration Icon */}
+              <motion.div 
+                initial={{ scale: 0 }}
+                animate={{ scale: [0, 1.2, 1] }}
+                transition={{ duration: 0.5, delay: 0.2 }}
+                className="w-20 h-20 bg-indigo-50 rounded-full flex items-center justify-center text-indigo-600 mb-6 border border-indigo-100 shadow-sm relative shrink-0"
+              >
+                <Sparkles className="w-10 h-10 animate-bounce" />
+                <motion.div 
+                  animate={{ scale: [1, 1.3, 1], opacity: [0.3, 0.8, 0.3] }}
+                  transition={{ duration: 2, repeat: Infinity }}
+                  className="absolute inset-0 bg-indigo-500 rounded-full -z-10" 
+                />
+              </motion.div>
+
+              {/* Text content */}
+              <h4 className="text-2xl font-black text-gray-900 tracking-tight">Congratulations!</h4>
+              <p className="text-sm font-semibold text-indigo-600 mt-1">Your Profile is Stunningly Complete!</p>
+              
+              <p className="text-xs text-gray-500 mt-3 max-w-xs leading-relaxed">
+                Great job! Your profile looks professional, making you stand out to clients and potential partners in the network.
+              </p>
+
+              {/* Card preview */}
+              <div className="w-full mt-6 p-4 bg-gray-50 border border-gray-100 rounded-2xl flex items-center space-x-4 text-left">
+                <div className="w-12 h-12 rounded-full overflow-hidden bg-gradient-to-tr from-indigo-500 to-blue-600 flex items-center justify-center text-white font-bold text-lg shrink-0 border-2 border-white shadow-sm">
+                  {avatarUrl ? (
+                    <img src={avatarUrl} alt="Avatar" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                  ) : (
+                    newName ? newName.substring(0, 2).toUpperCase() : 'ME'
+                  )}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center space-x-1">
+                    <h5 className="text-sm font-bold text-gray-900 truncate">{newName}</h5>
+                    {profile?.status === 'Verified' && <ShieldCheck className="w-4 h-4 text-green-600" />}
+                  </div>
+                  {title && <p className="text-[11px] text-indigo-600 font-bold truncate mt-0.5 uppercase tracking-wider">{title}</p>}
+                  {location && <p className="text-[10px] text-gray-400 font-medium truncate mt-0.5">{location}</p>}
+                </div>
+              </div>
+
+              {/* Button */}
+              <button
+                type="button"
+                onClick={() => {
+                  setShowCelebration(false);
+                  setShowProfileModal(false);
+                }}
+                className="w-full mt-6 py-3 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold rounded-2xl shadow-lg shadow-indigo-100 hover:shadow-xl transition-all"
+              >
+                Awesome, thank you!
+              </button>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
@@ -190,6 +1451,13 @@ function AuthView() {
         if (error) throw error;
       }
     } catch (err: any) {
+      console.error('Detailed Error during authentication:', {
+        message: err?.message || 'Unknown error',
+        code: err?.code || 'N/A',
+        details: err?.details || '',
+        hint: err?.hint || '',
+        fullError: err
+      });
       setError(err.message || 'An error occurred during authentication.');
     } finally {
       setLoading(false);
@@ -364,8 +1632,14 @@ function AdminView({ onlineUsersCount = 0 }: { onlineUsersCount?: number; key?: 
 
       setUsersList(enrichedUsers);
       setAgentPayouts(calculatedPayouts.filter(p => p.owedAmount > 0 || p.verifiedReferrals > 0));
-    } catch (error) {
-      console.error('Error fetching admin data:', error);
+    } catch (error: any) {
+      console.error('Detailed Error fetching admin data:', {
+        message: error?.message || 'Unknown error',
+        code: error?.code || 'N/A',
+        details: error?.details || '',
+        hint: error?.hint || '',
+        fullError: error
+      });
     } finally {
       setLoading(false);
     }
@@ -385,8 +1659,14 @@ function AdminView({ onlineUsersCount = 0 }: { onlineUsersCount?: number; key?: 
       setPendingTopups(prev => prev.filter(pt => pt.id !== id));
       setSelectedProof(null);
       fetchAdminData();
-    } catch (err) {
-      console.error('Failed to update topup status:', err);
+    } catch (err: any) {
+      console.error('Detailed Error updating topup status:', {
+        message: err?.message || 'Unknown error',
+        code: err?.code || 'N/A',
+        details: err?.details || '',
+        hint: err?.hint || '',
+        fullError: err
+      });
     }
   };
 
@@ -1051,8 +2331,14 @@ function ReferralView({ userId }: { userId: string; key?: string }) {
 
         setStats({ verifiedCount, pendingRewards, isCurrentUserVerified });
         setActivity(enrichedActivity);
-      } catch (err) {
-        console.error('Error fetching referral data:', err);
+      } catch (err: any) {
+        console.error('Detailed Error fetching referral data:', {
+          message: err?.message || 'Unknown error',
+          code: err?.code || 'N/A',
+          details: err?.details || '',
+          hint: err?.hint || '',
+          fullError: err
+        });
       }
     };
     fetchReferralData();
@@ -1272,8 +2558,14 @@ function WalletView({ userId }: { userId: string; key?: string }) {
       const totalAmount = approvedTopups.reduce((sum, t) => sum + Number(t.amount), 0);
       setBalance(totalAmount * 100);
       setTransactions(topups);
-    } catch (err) {
-      console.error('Error fetching wallet data:', err);
+    } catch (err: any) {
+      console.error('Detailed Error fetching wallet data:', {
+        message: err?.message || 'Unknown error',
+        code: err?.code || 'N/A',
+        details: err?.details || '',
+        hint: err?.hint || '',
+        fullError: err
+      });
     } finally {
       setLoading(false);
     }
@@ -1362,8 +2654,14 @@ function WalletView({ userId }: { userId: string; key?: string }) {
         setView('overview');
       }, 2500);
       
-    } catch (err) {
-      console.error('Failed to submit topup', err);
+    } catch (err: any) {
+      console.error('Detailed Error submitting topup:', {
+        message: err?.message || 'Unknown error',
+        code: err?.code || 'N/A',
+        details: err?.details || '',
+        hint: err?.hint || '',
+        fullError: err
+      });
       setReviewMessage('Failed to submit. Please try again.');
       setIsSubmitting(false);
     }
@@ -1593,50 +2891,5 @@ function WalletView({ userId }: { userId: string; key?: string }) {
   );
 }
 
-function ChatView() {
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: -10 }}
-      transition={{ duration: 0.2 }}
-      className="space-y-6"
-    >
-      <div>
-        <h1 className="text-2xl font-semibold text-gray-900">Chat</h1>
-        <p className="mt-1 text-sm text-gray-500">Connect with other users and agents.</p>
-      </div>
-      <div className="bg-white p-6 rounded-lg shadow border border-gray-100 flex items-center justify-center min-h-[300px]">
-        <div className="text-center">
-          <MessageSquare className="w-12 h-12 text-gray-300 mx-auto mb-4" />
-          <h3 className="text-lg font-medium text-gray-900">Chat Coming Soon</h3>
-          <p className="text-gray-500 mt-2">This feature is currently under development.</p>
-        </div>
-      </div>
-    </motion.div>
-  );
-}
 
-function SeekersView() {
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: -10 }}
-      transition={{ duration: 0.2 }}
-      className="space-y-6"
-    >
-      <div>
-        <h1 className="text-2xl font-semibold text-gray-900">Seekers</h1>
-        <p className="mt-1 text-sm text-gray-500">Discover and connect with active seekers.</p>
-      </div>
-      <div className="bg-white p-6 rounded-lg shadow border border-gray-100 flex items-center justify-center min-h-[300px]">
-        <div className="text-center">
-          <Search className="w-12 h-12 text-gray-300 mx-auto mb-4" />
-          <h3 className="text-lg font-medium text-gray-900">Seekers Coming Soon</h3>
-          <p className="text-gray-500 mt-2">This feature is currently under development.</p>
-        </div>
-      </div>
-    </motion.div>
-  );
-}
+
