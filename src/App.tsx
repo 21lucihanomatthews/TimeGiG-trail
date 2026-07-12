@@ -1133,7 +1133,7 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      <div className="h-screen h-[100dvh] w-full bg-gray-50 text-gray-900 font-sans flex flex-col overflow-hidden relative">
+      <div className="h-screen h-[100dvh] w-full bg-gray-50 text-gray-900 font-sans flex flex-col overflow-x-hidden overflow-y-hidden relative">
         <BackgroundPattern />
       {/* Top Bar */}
       <header className={`bg-white border-b border-gray-200 sticky top-0 z-10 w-full shrink-0 ${activeTab === 'chat' ? 'hidden' : ''}`}>

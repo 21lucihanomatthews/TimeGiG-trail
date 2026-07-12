@@ -1,0 +1,16 @@
+{
+  "name": "TimeGiG",
+  "short_name": "TimeGiG",
+  "description": "On-demand gig matching and time tracking platform.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#4f46e5",
+  "icons": [
+    {
+      "src": "/vite.svg",
+      "sizes": "192x192",
+      "type": "image/svg+xml"
+    }
+  ]
+}

@@ -335,7 +335,7 @@ export function GigsView({ onDirectToChat, onViewProfile }: GigsViewProps) {
       <motion.div
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
-        className="max-w-md mx-auto text-center py-12 space-y-6"
+        className="h-full w-full overflow-y-auto px-4 sm:px-6 py-8 max-w-md mx-auto text-center space-y-6"
       >
         <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mx-auto">
           <Briefcase className="w-10 h-10 text-indigo-600" />
@@ -358,7 +358,7 @@ export function GigsView({ onDirectToChat, onViewProfile }: GigsViewProps) {
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
         exit={{ opacity: 0, y: -10 }}
-        className="max-w-2xl mx-auto space-y-6"
+        className="h-full w-full overflow-y-auto px-4 sm:px-6 py-8 max-w-2xl mx-auto space-y-6"
       >
         <div className="flex items-center space-x-4">
           <button onClick={() => setView('list')} className="p-2 text-gray-500 hover:bg-gray-100 rounded-full transition-colors">
