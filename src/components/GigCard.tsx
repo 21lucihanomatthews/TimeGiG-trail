@@ -1,6 +1,7 @@
 import React from 'react';
 import { MapPin, Heart, Share2, Briefcase, Eye, Users, Edit2, Trash2 } from 'lucide-react';
 import { motion } from 'motion/react';
+import { getInitials, getAvatarColorClass } from '../lib/avatar';
 
 interface GigCardProps {
   gig: any;
@@ -9,12 +10,72 @@ interface GigCardProps {
   onDelete: (id: string) => void;
   onViewImage: (images: string[]) => void;
   onApply?: (gig: any) => void;
+  onViewProfile?: (profile: any) => void;
   key?: React.Key;
 }
 
-export function GigCard({ gig, user, onEdit, onDelete, onViewImage, onApply }: GigCardProps) {
+export function GigCard({ gig, user, onEdit, onDelete, onViewImage, onApply, onViewProfile }: GigCardProps) {
   const isOwner = user?.id === gig.user_id;
   console.log('GigCard debug:', { isOwner, userId: user?.id, gigUserId: gig.user_id });
+
+  const isCompact = localStorage.getItem('compact_layout') === 'true';
+
+  if (isCompact) {
+    return (
+      <motion.div
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="bg-white rounded-xl shadow-xs border border-gray-100 p-2.5 hover:shadow-sm transition-shadow duration-300 flex items-center justify-between text-gray-900 gap-3 text-xs w-full"
+      >
+        {/* Left info */}
+        <div className="flex items-center gap-2.5 min-w-0 flex-1">
+          <div className="w-12 h-12 rounded-lg overflow-hidden bg-gray-100 shrink-0 cursor-pointer" onClick={() => onViewImage(gig.images || [])}>
+            {gig.images && gig.images.length > 0 ? (
+              <img src={gig.images[0]} alt={gig.title} className="w-full h-full object-cover" />
+            ) : (
+              <div className="w-full h-full flex items-center justify-center text-gray-300">
+                <Briefcase className="w-5 h-5" />
+              </div>
+            )}
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-1.5 mb-0.5">
+              <span className="text-[9px] font-bold px-1.5 py-0.2 rounded-full bg-indigo-50 text-indigo-700">
+                {gig.category || 'General'}
+              </span>
+              <span className="text-[11px] font-black text-gray-900">R {Number(gig.price || 0).toLocaleString()}</span>
+            </div>
+            <h3 className="font-bold text-gray-900 truncate">{gig.title}</h3>
+            <div className="flex items-center gap-2 text-[9px] text-gray-500 mt-0.5">
+              <span className="flex items-center gap-0.5"><MapPin className="w-2.5 h-2.5" /> {gig.location}</span>
+              <span className="truncate max-w-[120px] font-medium text-gray-400">by {gig.profiles?.name || 'Anonymous'}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Right Actions */}
+        <div className="flex items-center gap-1.5 shrink-0">
+          {isOwner ? (
+            <>
+              <button onClick={() => onEdit(gig)} className="p-1.5 bg-gray-50 hover:bg-gray-100 text-gray-700 rounded-lg font-medium transition-colors" title="Edit">
+                <Edit2 className="w-3.5 h-3.5" />
+              </button>
+              <button onClick={() => onDelete(gig.id)} className="p-1.5 bg-red-50 hover:bg-red-100 text-red-700 rounded-lg font-medium transition-colors" title="Delete">
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+            </>
+          ) : (
+            <button 
+              onClick={() => onApply?.(gig)}
+              className="py-1 px-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-semibold text-[11px] transition-colors"
+            >
+              Apply
+            </button>
+          )}
+        </div>
+      </motion.div>
+    );
+  }
 
   return (
     <motion.div
@@ -46,7 +107,10 @@ export function GigCard({ gig, user, onEdit, onDelete, onViewImage, onApply }: G
         <p className="text-xs text-gray-500 line-clamp-2 mb-3 flex-1">{gig.description}</p>
         
         {/* Creator Info */}
-        <div className="flex items-center space-x-2 mb-3 p-2 bg-gray-50 rounded-xl border border-gray-100">
+        <div 
+          className="flex items-center space-x-2 mb-3 p-2 bg-gray-50 rounded-xl border border-gray-100 cursor-pointer hover:bg-gray-100 transition-colors"
+          onClick={() => onViewProfile?.(gig.profiles)}
+        >
           {gig.profiles?.avatar_url ? (
             <img 
               src={gig.profiles.avatar_url} 
@@ -55,8 +119,8 @@ export function GigCard({ gig, user, onEdit, onDelete, onViewImage, onApply }: G
               referrerPolicy="no-referrer"
             />
           ) : (
-            <div className="w-8 h-8 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center font-bold text-[10px] shrink-0 border border-white shadow-sm">
-              {gig.profiles?.name?.charAt(0).toUpperCase() || 'U'}
+            <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-[10px] shrink-0 border border-white shadow-sm ${getAvatarColorClass(gig.profiles?.name)}`}>
+              {getInitials(gig.profiles?.name)}
             </div>
           )}
           <div className="min-w-0">

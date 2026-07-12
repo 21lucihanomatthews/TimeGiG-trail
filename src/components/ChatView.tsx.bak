@@ -27,12 +27,7 @@ import {
   Square,
   Pencil,
   MoreVertical,
-  Ban,
-  Volume2,
-  VolumeX,
-  Download,
-  Info,
-  Copy
+  Ban
 } from 'lucide-react';
 
 // Date formatting helpers
@@ -80,11 +75,9 @@ import {
   deleteMessages,
   clearChat,
   clearAllChats,
-  markAsDeletedLocally,
   blockUser,
   unblockUser,
   fetchBlockedUsers,
-  isBlockedEitherWay,
   isFriend,
   markMessagesAsRead,
   markSingleMessageAsRead,
@@ -134,9 +127,16 @@ export function ChatView({ userId, activeContactId: propActiveContactId, setActi
   const [loading, setLoading] = useState(false);
   const [lastActivity, setLastActivity] = useState(Date.now());
   const [showProfileDetails, setShowProfileDetails] = useState<Profile | null>(null);
+  const [blockedUsers, setBlockedUsers] = useState<string[]>([]);
 
-
-  
+  useEffect(() => {
+    if (profileToView) {
+      setShowProfileDetails(profileToView);
+      if (setProfileToView) {
+        setProfileToView(null);
+      }
+    }
+  }, [profileToView, setProfileToView]);
 
   const [incomingRequests, setIncomingRequests] = useState<any[]>([]);
   const [sentRequests, setSentRequests] = useState<any[]>([]);
@@ -224,81 +224,6 @@ export function ChatView({ userId, activeContactId: propActiveContactId, setActi
   const [headerMenuOpen, setHeaderMenuOpen] = useState(false);
   const longPressTimerRef = useRef<NodeJS.Timeout | null>(null);
 
-  const [isMuted, setIsMuted] = useState(activeContactId ? localStorage.getItem(`mute_chat_${activeContactId}`) === 'true' : false);
-  const [blockedUserIds, setBlockedUserIds] = useState<string[]>([]);
-  const [isBlockedByActiveContact, setIsBlockedByActiveContact] = useState(false);
-
-  const fetchAndSetBlockedUsers = React.useCallback(async () => {
-    if (!userId) return;
-    try {
-      const blocked = await fetchBlockedUsers(userId);
-      setBlockedUserIds(blocked || []);
-    } catch (err) {
-      console.warn('Error loading blocked users:', err);
-    }
-  }, [userId]);
-
-  useEffect(() => {
-    if (userId) {
-      fetchAndSetBlockedUsers();
-    }
-  }, [userId, fetchAndSetBlockedUsers]);
-
-  const handleBlockToggle = async () => {
-    if (!activeContactId || !userId) return;
-    const isCurrentlyBlocked = blockedUserIds.includes(activeContactId);
-    try {
-      if (isCurrentlyBlocked) {
-        await unblockUser(userId, activeContactId);
-        setBlockedUserIds(prev => prev.filter(id => id !== activeContactId));
-        setToast({ message: 'Contact unblocked successfully', type: 'success' });
-      } else {
-        await blockUser(userId, activeContactId);
-        setBlockedUserIds(prev => [...prev, activeContactId]);
-        setToast({ message: 'Contact blocked successfully', type: 'success' });
-      }
-    } catch (err) {
-      console.warn('Error toggling block status:', err);
-      setToast({ message: 'Failed to update block status', type: 'error' });
-    }
-  };
-
-  useEffect(() => {
-    if (activeContactId) {
-      setIsMuted(localStorage.getItem(`mute_chat_${activeContactId}`) === 'true');
-    }
-  }, [activeContactId]);
-
-  const handleExportChat = () => {
-    if (!activeContactId || !activeProfile || activeMessages.length === 0) return;
-    try {
-      const contactName = activeProfile.name || 'Contact';
-      const timestamp = new Date().toISOString().slice(0, 10);
-      const filename = `chat_with_${contactName.toLowerCase().replace(/\s+/g, '_')}_${timestamp}.txt`;
-      
-      const transcript = activeMessages.map(msg => {
-        const senderName = msg.sender_id === userId ? 'Me' : contactName;
-        const time = new Date(msg.created_at).toLocaleString();
-        return `[${time}] ${senderName}: ${msg.content || (msg.media_url ? '[Media File]' : '[Empty Message]')}`;
-      }).join('\n');
-      
-      const blob = new Blob([transcript], { type: 'text/plain;charset=utf-8' });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = filename;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      URL.revokeObjectURL(url);
-      
-      setToast({ message: 'Chat history exported successfully!', type: 'success' });
-    } catch (err) {
-      console.warn('Error exporting chat:', err);
-      setToast({ message: 'Failed to export chat history', type: 'error' });
-    }
-  };
-
   const handlePointerDown = (msgId: string) => {
     if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
     longPressTimerRef.current = setTimeout(() => {
@@ -348,20 +273,9 @@ export function ChatView({ userId, activeContactId: propActiveContactId, setActi
 
   const handleClearChat = async () => {
     if (activeContactId) {
-      // 1. Immediately mark all currently visible messages as deleted locally so polling doesn't bring them back
-      const msgIds = activeMessages.map(m => m.id);
-      if (msgIds.length > 0) {
-        markAsDeletedLocally(msgIds);
-      }
-      
-      // 2. Immediately clear the local UI messages state for instant feedback
-      setActiveMessages([]);
-      
-      // 3. Clear from the database/local storage in the background
-      try {
+      if (window.confirm("Are you sure you want to clear this chat?")) {
         await clearChat(userId, activeContactId);
-      } catch (err) {
-        console.warn('Error clearing chat database:', err);
+        setActiveMessages([]);
       }
     }
   };
@@ -530,15 +444,13 @@ export function ChatView({ userId, activeContactId: propActiveContactId, setActi
   const loadData = React.useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
     try {
-      // Load incoming, sent requests, and blocked users
-      const [incoming, sent, blocked] = await Promise.all([
+      // Load incoming and sent requests
+      const [incoming, sent] = await Promise.all([
         fetchFriendRequests(userId),
-        fetchSentFriendRequests(userId),
-        fetchBlockedUsers(userId)
+        fetchSentFriendRequests(userId)
       ]);
       setIncomingRequests(incoming || []);
       setSentRequests(sent || []);
-      setBlockedUserIds(blocked || []);
 
       if (subTab === 'Contacts' || subTab === 'Chats' || subTab === 'Discover' || subTab === 'Requests') {
         const data = await fetchContacts(userId);
@@ -639,7 +551,7 @@ export function ChatView({ userId, activeContactId: propActiveContactId, setActi
   }, [subTab, userId]);
 
   const filteredProfiles = profiles.filter(p => 
-    p.id !== userId && (
+    p.id !== userId && !blockedUsers.includes(p.id) && (
       p.name?.toLowerCase().includes(search.toLowerCase()) || 
       p.email?.toLowerCase().includes(search.toLowerCase())
     )
@@ -694,30 +606,6 @@ export function ChatView({ userId, activeContactId: propActiveContactId, setActi
 
     // Initial load
     const loadMessages = async () => {
-      // Check if we are blocked by the active contact
-      let blockedByThem = false;
-      try {
-        if (userId && activeContactId) {
-          const isMeUUID = typeof userId === 'string' && userId.length === 36;
-          const isThemUUID = typeof activeContactId === 'string' && activeContactId.length === 36;
-          
-          if (isMeUUID && isThemUUID) {
-            const { data } = await supabase
-              .from('blocked_users')
-              .select('user_id')
-              .eq('user_id', activeContactId)
-              .eq('blocked_id', userId);
-            blockedByThem = !!(data && data.length > 0);
-          } else {
-            const blockedList = JSON.parse(localStorage.getItem(`chat_blocked_users_${activeContactId}`) || '[]');
-            blockedByThem = blockedList.includes(userId);
-          }
-        }
-      } catch (err) {
-        console.warn('Error checking if blocked by active contact:', err);
-      }
-      setIsBlockedByActiveContact(blockedByThem);
-
       const msgs = await getLocalMessages(userId, activeContactId);
       
       // Play a smooth sound if a new message is received from the other user
@@ -727,8 +615,7 @@ export function ChatView({ userId, activeContactId: propActiveContactId, setActi
         if (lastKnownMessageIdRef.current !== null && lastKnownMessageIdRef.current !== lastMsg.id) {
           // It's a new message! Play sound only if it was sent by the other contact
           if (lastMsg.sender_id !== userId) {
-            const isThisChatMuted = localStorage.getItem(`mute_chat_${activeContactId}`) === 'true';
-            if (localStorage.getItem('notify_chat') !== 'false' && !isThisChatMuted) {
+            if (localStorage.getItem('notify_chat') !== 'false') {
               playNotificationSound('message');
               const contactName = contacts.find(c => c.friend_id === activeContactId)?.profiles?.name || 'Someone';
               sendDesktopNotification(`💬 Message from ${contactName}`, {
@@ -803,18 +690,57 @@ export function ChatView({ userId, activeContactId: propActiveContactId, setActi
     markRead();
   }, [userId, activeContactId, onRefreshCounts, loadData]);
 
+  useEffect(() => {
+    const fetchBlocked = async () => {
+      const blocked = await fetchBlockedUsers(userId);
+      setBlockedUsers(blocked);
+    };
+    fetchBlocked();
+  }, [userId]);
 
-  const isCurrentlyBlocked = activeContactId ? blockedUserIds.includes(activeContactId) : false;
-  const isConversationBlocked = isCurrentlyBlocked || isBlockedByActiveContact;
+  const handleBlockUser = async (targetId: string) => {
+    console.log('[handleBlockUser] Handler called', { targetId });
+    if (!window.confirm("Are you sure you want to block this user? You won't receive messages from them.")) return;
+    
+    // Optimistic update
+    setBlockedUsers(prev => [...prev, targetId]);
+    
+    try {
+      await blockUser(userId, targetId);
+      const updated = await fetchBlockedUsers(userId);
+      setBlockedUsers(updated);
+      setShowProfileDetails(null);
+      setActiveContactId(null);
+      // Refresh contact list to hide the blocked user
+      loadData(true);
+      console.log('[handleBlockUser] Success');
+    } catch (err: any) {
+      console.error('[handleBlockUser] Error:', err);
+      // Rollback
+      setBlockedUsers(prev => prev.filter(id => id !== targetId));
+      alert(`Failed to block user: ${err.message || err}`);
+    }
+  };
+
+  const handleUnblockUser = async (targetId: string) => {
+    console.log('[handleUnblockUser] Handler called', { targetId });
+    
+    try {
+      await unblockUser(userId, targetId);
+      const updated = await fetchBlockedUsers(userId);
+      setBlockedUsers(updated);
+      // Refresh contact list to show the unblocked user
+      loadData(true);
+      console.log('[handleUnblockUser] Success');
+    } catch (err: any) {
+      console.error('[handleUnblockUser] Error:', err);
+      // alert is handled inside unblockUser library function
+    }
+  };
 
   const handleSendMessage = async (textToSend?: string) => {
     const text = textToSend !== undefined ? textToSend : messageText;
     if (!text.trim() || !activeContactId) return;
-
-    if (isConversationBlocked) {
-      alert('Communication is restricted. This conversation is blocked.');
-      return;
-    }
 
     // Check friendship
     const friends = await isFriend(userId, activeContactId);
@@ -823,6 +749,11 @@ export function ChatView({ userId, activeContactId: propActiveContactId, setActi
       return;
     }
 
+    // Check block status
+    if (blockedUsers.includes(activeContactId)) {
+      alert('You cannot send messages to a blocked user.');
+      return;
+    }
 
     await sendLocalMessage(userId, activeContactId, text.trim());
     if (textToSend === undefined) {
@@ -843,7 +774,7 @@ export function ChatView({ userId, activeContactId: propActiveContactId, setActi
       <motion.div
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
-        className="flex flex-1 h-full w-full bg-[#F5F1E6] overflow-hidden"
+        className="flex flex-1 h-full w-full bg-gray-50 overflow-hidden"
       >
         {/* 1. LEFT SIDEBAR: User Profiles & Discover Section */}
         <div className={`w-full bg-white flex-col shrink-0 ${activeContactId ? 'hidden' : 'flex flex-1'}`}>
@@ -925,7 +856,7 @@ export function ChatView({ userId, activeContactId: propActiveContactId, setActi
                   const isSelected = c.friend_id === activeContactId;
                   const latestMsg = c.latestMsg;
                   const isIncoming = latestMsg && latestMsg.sender_id !== userId;
-                  const isBlocked = blockedUserIds.includes(c.friend_id);
+                  const isBlocked = blockedUsers.includes(c.friend_id);
                   
                   return (
                     <div
@@ -1020,7 +951,7 @@ export function ChatView({ userId, activeContactId: propActiveContactId, setActi
             <div className="space-y-2.5">
               {contacts.map((c) => {
                 const isSelected = c.friend_id === activeContactId;
-                const isBlocked = blockedUserIds.includes(c.friend_id);
+                const isBlocked = blockedUsers.includes(c.friend_id);
                 return (
                   <div
                     key={c.friend_id}
@@ -1370,21 +1301,20 @@ export function ChatView({ userId, activeContactId: propActiveContactId, setActi
                   <h4 className="font-bold text-sm sm:text-base text-gray-900 truncate group-hover:text-indigo-600">
                     {activeProfile.name || 'Contact'}
                   </h4>
-
+                  {activeContactId && blockedUsers.includes(activeContactId) && (
+                    <span className="bg-rose-100 text-rose-600 text-[10px] font-black uppercase px-2 py-0.5 rounded-full flex items-center gap-1 shadow-xs shrink-0">
+                      <Ban className="w-3 h-3" />
+                      Blocked
+                    </span>
+                  )}
                 </div>
               </div>
             </div>
             {/* Header Actions - Moved to corner */}
-              <div className="flex items-center gap-3 ml-auto">
+              <div className="absolute top-3 right-4 flex items-center gap-3">
                 {isSelectionMode ? (
                    <>
                      <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">{selectedMessageIds.size} selected</span>
-                     <button
-                        onClick={() => setSelectedMessageIds(new Set(activeMessages.map(m => m.id)))}
-                        className="text-xs font-bold text-indigo-600 hover:text-indigo-700 uppercase tracking-wider px-2"
-                      >
-                        Select All
-                      </button>
                      <button 
                        onClick={handleDeleteSelected}
                        className="p-2 text-red-600 hover:bg-red-50 rounded-full transition-colors"
@@ -1404,7 +1334,7 @@ export function ChatView({ userId, activeContactId: propActiveContactId, setActi
                   <>
                     <button 
                       onClick={() => setHeaderMenuOpen(true)}
-                      className="p-2.5 text-gray-500 hover:text-indigo-600 hover:bg-indigo-50/50 active:scale-95 rounded-full transition-all duration-200 border border-transparent hover:border-indigo-100 shadow-xs hover:shadow-md"
+                      className="p-2 text-gray-400 hover:text-indigo-600 hover:bg-gray-100 rounded-full transition-all duration-200 shadow-xs hover:shadow-sm"
                       title="More Options"
                     >
                       <MoreVertical className="w-5 h-5" />
@@ -1422,154 +1352,42 @@ export function ChatView({ userId, activeContactId: propActiveContactId, setActi
                             initial={{ opacity: 0, scale: 0.95, y: -10 }}
                             animate={{ opacity: 1, scale: 1, y: 0 }}
                             exit={{ opacity: 0, scale: 0.95, y: -10 }}
-                            transition={{ duration: 0.15, ease: "easeOut" }}
-                            className="absolute right-4 top-16 w-64 bg-white border border-gray-100 rounded-2xl shadow-xl z-[160] overflow-hidden p-2.5"
+                            className="absolute right-6 top-14 w-48 bg-white border border-gray-100 rounded-2xl shadow-xl z-[160] overflow-hidden p-1.5"
                           >
-                            <div className="px-3 py-1.5 mb-1">
-                              <span className="text-[10px] font-black text-indigo-600 uppercase tracking-widest block">Conversation Tools</span>
-                            </div>
-                            
-                            <div className="space-y-1">
-                              {/* Option 1: Select Messages */}
-                              <motion.button
-                                whileHover={{ x: 3 }}
-                                whileTap={{ scale: 0.98 }}
+                            <button
+                              onClick={() => {
+                                setIsSelectionMode(true);
+                                setHeaderMenuOpen(false);
+                              }}
+                              className="w-full flex items-center gap-2.5 px-3 py-2.5 text-xs font-bold text-gray-600 hover:bg-gray-50 rounded-xl transition-colors"
+                            >
+                              <CheckSquare className="w-4 h-4 text-gray-400" />
+                              Select Messages
+                            </button>
+                            <div className="h-px bg-gray-100 my-1 mx-2" />
+                            {blockedUsers.includes(activeContactId) ? (
+                              <button
                                 onClick={() => {
-                                  setIsSelectionMode(true);
+                                  handleUnblockUser(activeContactId);
                                   setHeaderMenuOpen(false);
                                 }}
-                                className="w-full flex items-start gap-3 p-2 text-left hover:bg-slate-50 rounded-xl transition-colors"
+                                className="w-full flex items-center gap-2.5 px-3 py-2.5 text-xs font-bold text-indigo-600 hover:bg-indigo-50 rounded-xl transition-colors"
                               >
-                                <div className="w-8 h-8 rounded-lg bg-indigo-50 flex items-center justify-center shrink-0 text-indigo-600">
-                                  <CheckSquare className="w-4 h-4" />
-                                </div>
-                                <div className="flex flex-col min-w-0">
-                                  <span className="text-xs font-semibold text-slate-800">Select Messages</span>
-                                  <span className="text-[10px] text-slate-400 mt-0.5 leading-tight">Pick messages to delete in bulk</span>
-                                </div>
-                              </motion.button>
-
-                              {/* Option 2: Export Chat */}
-                              <motion.button
-                                whileHover={{ x: 3 }}
-                                whileTap={{ scale: 0.98 }}
+                                <ShieldCheck className="w-4 h-4" />
+                                Unblock User
+                              </button>
+                            ) : (
+                              <button
                                 onClick={() => {
-                                  handleExportChat();
+                                  handleBlockUser(activeContactId);
                                   setHeaderMenuOpen(false);
                                 }}
-                                className="w-full flex items-start gap-3 p-2 text-left hover:bg-slate-50 rounded-xl transition-colors"
+                                className="w-full flex items-center gap-2.5 px-3 py-2.5 text-xs font-bold text-rose-600 hover:bg-rose-50 rounded-xl transition-colors"
                               >
-                                <div className="w-8 h-8 rounded-lg bg-blue-50 flex items-center justify-center shrink-0 text-blue-600">
-                                  <Download className="w-4 h-4" />
-                                </div>
-                                <div className="flex flex-col min-w-0">
-                                  <span className="text-xs font-semibold text-slate-800">Export Chat history</span>
-                                  <span className="text-[10px] text-slate-400 mt-0.5 leading-tight">Download chat transcript as text</span>
-                                </div>
-                              </motion.button>
-
-                              {/* Option 3: Mute Chat */}
-                              <motion.button
-                                whileHover={{ x: 3 }}
-                                whileTap={{ scale: 0.98 }}
-                                onClick={() => {
-                                  const newVal = !isMuted;
-                                  setIsMuted(newVal);
-                                  localStorage.setItem(`mute_chat_${activeContactId}`, newVal ? 'true' : 'false');
-                                  setHeaderMenuOpen(false);
-                                  setToast({ 
-                                    message: newVal ? 'Conversation muted' : 'Conversation unmuted', 
-                                    type: 'info' 
-                                  });
-                                }}
-                                className="w-full flex items-start gap-3 p-2 text-left hover:bg-slate-50 rounded-xl transition-colors"
-                              >
-                                <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${isMuted ? 'bg-amber-50 text-amber-600' : 'bg-slate-100 text-slate-600'}`}>
-                                  {isMuted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
-                                </div>
-                                <div className="flex flex-col min-w-0 flex-1">
-                                  <div className="flex items-center justify-between">
-                                    <span className="text-xs font-semibold text-slate-800">Mute Notifications</span>
-                                    {isMuted && <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse shrink-0 ml-1" />}
-                                  </div>
-                                  <span className="text-[10px] text-slate-400 mt-0.5 leading-tight">
-                                    {isMuted ? 'Alerts are currently disabled' : 'Silence alerts from this contact'}
-                                  </span>
-                                </div>
-                              </motion.button>
-
-                              {/* Option 4: View Info */}
-                              <motion.button
-                                whileHover={{ x: 3 }}
-                                whileTap={{ scale: 0.98 }}
-                                onClick={() => {
-                                  setShowProfileDetails(activeProfile);
-                                  setHeaderMenuOpen(false);
-                                }}
-                                className="w-full flex items-start gap-3 p-2 text-left hover:bg-slate-50 rounded-xl transition-colors"
-                              >
-                                <div className="w-8 h-8 rounded-lg bg-emerald-50 flex items-center justify-center shrink-0 text-emerald-600">
-                                  <Info className="w-4 h-4" />
-                                </div>
-                                <div className="flex flex-col min-w-0">
-                                  <span className="text-xs font-semibold text-slate-800">Contact Details</span>
-                                  <span className="text-[10px] text-slate-400 mt-0.5 leading-tight">View profile, bio & handle info</span>
-                                </div>
-                              </motion.button>
-
-                              <div className="h-px bg-slate-100 my-1.5 mx-1" />
-
-                              {/* Option 5: Clear Conversation */}
-                              <motion.button
-                                whileHover={{ x: 3 }}
-                                whileTap={{ scale: 0.98 }}
-                                onClick={() => {
-                                  handleClearChat();
-                                  setHeaderMenuOpen(false);
-                                }}
-                                className="w-full flex items-start gap-3 p-2 text-left hover:bg-rose-50/50 rounded-xl transition-colors group/delete"
-                              >
-                                <div className="w-8 h-8 rounded-lg bg-rose-50 flex items-center justify-center shrink-0 text-rose-600 group-hover/delete:bg-rose-100 transition-colors">
-                                  <Trash2 className="w-4 h-4" />
-                                </div>
-                                <div className="flex flex-col min-w-0">
-                                  <span className="text-xs font-semibold text-rose-600">Clear Conversation</span>
-                                  <span className="text-[10px] text-rose-400 mt-0.5 leading-tight">Wipe all messages in this chat</span>
-                                </div>
-                              </motion.button>
-
-                              {/* Option 6: Block / Unblock User */}
-                              <motion.button
-                                whileHover={{ x: 3 }}
-                                whileTap={{ scale: 0.98 }}
-                                onClick={() => {
-                                  handleBlockToggle();
-                                  setHeaderMenuOpen(false);
-                                }}
-                                className="w-full flex items-start gap-3 p-2 text-left hover:bg-rose-50/50 rounded-xl transition-colors group/block"
-                              >
-                                <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 transition-colors ${
-                                  blockedUserIds.includes(activeContactId || '') 
-                                    ? 'bg-emerald-50 text-emerald-600 group-hover/block:bg-emerald-100' 
-                                    : 'bg-rose-50 text-rose-600 group-hover/block:bg-rose-100'
-                                }`}>
-                                  <Ban className="w-4 h-4" />
-                                </div>
-                                <div className="flex flex-col min-w-0">
-                                  <span className={`text-xs font-semibold ${
-                                    blockedUserIds.includes(activeContactId || '') ? 'text-emerald-600' : 'text-rose-600'
-                                  }`}>
-                                    {blockedUserIds.includes(activeContactId || '') ? 'Unblock Contact' : 'Block Contact'}
-                                  </span>
-                                  <span className="text-[10px] text-slate-400 mt-0.5 leading-tight">
-                                    {blockedUserIds.includes(activeContactId || '') 
-                                      ? 'Allow messages from this contact' 
-                                      : 'Prevent messages from this contact'
-                                    }
-                                  </span>
-                                </div>
-                              </motion.button>
-                            </div>
+                                <Ban className="w-4 h-4" />
+                                Block User
+                              </button>
+                            )}
                           </motion.div>
                         </>
                       )}
@@ -1629,19 +1447,19 @@ export function ChatView({ userId, activeContactId: propActiveContactId, setActi
                       </div>
                     )}
                     <div className={`flex items-start gap-2.5 w-full relative ${isMe ? 'justify-end' : 'justify-start'}`}>
+                    <div 
+                      className="flex flex-col relative group"
+                      onPointerDown={() => handlePointerDown(msg.id)}
+                      onPointerUp={handlePointerUp}
+                      onPointerLeave={handlePointerUp}
+                      onContextMenu={(e) => { e.preventDefault(); }}
+                      style={{ WebkitUserSelect: 'none', userSelect: 'none', WebkitTouchCallout: 'none' }}
+                    >
                       {isSelectionMode && (
-                        <div className="shrink-0 cursor-pointer self-center z-20" onClick={(e) => { e.stopPropagation(); handleToggleSelection(msg.id); }}>
+                        <div className="absolute top-1/2 -translate-y-1/2 -left-8 cursor-pointer" onClick={(e) => { e.stopPropagation(); handleToggleSelection(msg.id); }}>
                           {selectedMessageIds.has(msg.id) ? <CheckSquare className="w-5 h-5 text-indigo-600" /> : <Square className="w-5 h-5 text-gray-400" />}
                         </div>
                       )}
-                      <div 
-                        className="flex flex-col relative group"
-                        onPointerDown={() => handlePointerDown(msg.id)}
-                        onPointerUp={handlePointerUp}
-                        onPointerLeave={handlePointerUp}
-                        onContextMenu={(e) => { e.preventDefault(); }}
-                        style={{ WebkitUserSelect: 'none', userSelect: 'none', WebkitTouchCallout: 'none' }}
-                      >
 
                       <div 
                         onDoubleClick={() => handleReactionSelect('👍', msg.id)}
@@ -1733,128 +1551,46 @@ export function ChatView({ userId, activeContactId: propActiveContactId, setActi
                       </div>
 
                       {/* Message Menu Overlay */}
-                      <AnimatePresence>
-                        {menuMessageId === msg.id && (
-                          <div className="fixed inset-0 z-[160] flex items-center justify-center p-4">
-                            <motion.div 
-                              initial={{ opacity: 0 }}
-                              animate={{ opacity: 1 }}
-                              exit={{ opacity: 0 }}
-                              className="fixed inset-0 bg-slate-900/40 backdrop-blur-[3px]" 
-                              onClick={() => setMenuMessageId(null)} 
-                            />
-                            
-                            <motion.div 
-                              initial={{ opacity: 0, scale: 0.95, y: 15 }}
-                              animate={{ opacity: 1, scale: 1, y: 0 }}
-                              exit={{ opacity: 0, scale: 0.95, y: 15 }}
-                              transition={{ type: "spring", duration: 0.3 }}
-                              className="bg-white border border-slate-100 rounded-3xl shadow-2xl p-4 flex flex-col gap-3 z-[170] max-w-xs w-full overflow-hidden"
-                            >
-                              <div className="px-2 py-1">
-                                <span className="text-[10px] font-black text-indigo-600 uppercase tracking-widest block">Message Options</span>
-                              </div>
-                              
-                              <div className="space-y-1">
-                                {/* Copy Option */}
-                                {msg.content && (
-                                  <motion.button 
-                                    whileHover={{ x: 3 }}
-                                    whileTap={{ scale: 0.98 }}
-                                    onClick={(e) => { 
-                                      e.stopPropagation(); 
-                                      setMenuMessageId(null); 
-                                      navigator.clipboard.writeText(msg.content);
-                                      setToast({ message: 'Message copied to clipboard!', type: 'success' });
-                                    }} 
-                                    className="w-full flex items-start gap-3 p-2 text-left hover:bg-slate-50 rounded-xl transition-colors group/item"
-                                  >
-                                    <div className="w-8 h-8 rounded-lg bg-blue-50 flex items-center justify-center shrink-0 text-blue-600 transition-colors group-hover/item:bg-blue-100">
-                                      <Copy className="w-4 h-4" />
-                                    </div>
-                                    <div className="flex flex-col min-w-0">
-                                      <span className="text-xs font-semibold text-slate-800">Copy Text</span>
-                                      <span className="text-[10px] text-slate-400 mt-0.5 leading-tight">Copy text to clipboard</span>
-                                    </div>
-                                  </motion.button>
-                                )}
+                      {menuMessageId === msg.id && (
+                        <div className="fixed top-0 left-0 w-full h-full flex items-center justify-center z-[100]">
+                           <div className="fixed inset-0 bg-black/40 backdrop-blur-[2px] z-[90]" onClick={() => setMenuMessageId(null)} />
+                           <div className="bg-white border border-gray-200 rounded-3xl shadow-2xl p-4 flex flex-col gap-2 z-[100] animate-in fade-in zoom-in duration-200 max-w-xs w-full mx-4">
+                             <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider px-2 mb-1">Message Options</h3>
+                             
+                             <button 
+                               onClick={(e) => { e.stopPropagation(); setIsSelectionMode(true); setMenuMessageId(null); handleToggleSelection(msg.id); }} 
+                               className="text-gray-700 hover:bg-gray-100 px-4 py-2.5 rounded-xl text-sm font-medium flex items-center transition-colors"
+                             >
+                               <CheckSquare className="w-4 h-4 mr-3 text-gray-400" /> Select Message
+                             </button>
 
-                                {/* Select Option */}
-                                <motion.button 
-                                  whileHover={{ x: 3 }}
-                                  whileTap={{ scale: 0.98 }}
-                                  onClick={(e) => { 
-                                    e.stopPropagation(); 
-                                    setIsSelectionMode(true); 
-                                    setMenuMessageId(null); 
-                                    handleToggleSelection(msg.id); 
-                                  }} 
-                                  className="w-full flex items-start gap-3 p-2 text-left hover:bg-slate-50 rounded-xl transition-colors group/item"
-                                >
-                                  <div className="w-8 h-8 rounded-lg bg-indigo-50 flex items-center justify-center shrink-0 text-indigo-600 transition-colors group-hover/item:bg-indigo-100">
-                                    <CheckSquare className="w-4 h-4" />
-                                  </div>
-                                  <div className="flex flex-col min-w-0">
-                                    <span className="text-xs font-semibold text-slate-800">Select Message</span>
-                                    <span className="text-[10px] text-slate-400 mt-0.5 leading-tight">Add to multi-select list</span>
-                                  </div>
-                                </motion.button>
+                             {isMe && (
+                               <button 
+                                 onClick={(e) => { e.stopPropagation(); setMenuMessageId(null); startEditing(msg); }}
+                                 className="text-indigo-600 hover:bg-indigo-50 px-4 py-2.5 rounded-xl text-sm font-medium flex items-center transition-colors"
+                               >
+                                 <Pencil className="w-4 h-4 mr-3" /> Edit Message
+                               </button>
+                             )}
 
-                                {/* Edit Option */}
-                                {isMe && (
-                                  <motion.button 
-                                    whileHover={{ x: 3 }}
-                                    whileTap={{ scale: 0.98 }}
-                                    onClick={(e) => { 
-                                      e.stopPropagation(); 
-                                      setMenuMessageId(null); 
-                                      startEditing(msg); 
-                                    }}
-                                    className="w-full flex items-start gap-3 p-2 text-left hover:bg-slate-50 rounded-xl transition-colors group/item"
-                                  >
-                                    <div className="w-8 h-8 rounded-lg bg-indigo-50 flex items-center justify-center shrink-0 text-indigo-600 transition-colors group-hover/item:bg-indigo-100">
-                                      <Pencil className="w-4 h-4" />
-                                    </div>
-                                    <div className="flex flex-col min-w-0">
-                                      <span className="text-xs font-semibold text-indigo-600">Edit Message</span>
-                                      <span className="text-[10px] text-indigo-400 mt-0.5 leading-tight">Modify message content</span>
-                                    </div>
-                                  </motion.button>
-                                )}
+                             <div className="h-px bg-gray-100 my-1" />
 
-                                <div className="h-px bg-slate-100 my-1 mx-1" />
+                             <button 
+                               onClick={(e) => { e.stopPropagation(); setMenuMessageId(null); handleDeleteSingleMessage(msg.id); }} 
+                               className="text-red-600 hover:bg-red-50 px-4 py-2.5 rounded-xl text-sm font-medium flex items-center transition-colors"
+                             >
+                               <Trash2 className="w-4 h-4 mr-3" /> Delete Message
+                             </button>
 
-                                {/* Delete Option */}
-                                <motion.button 
-                                  whileHover={{ x: 3 }}
-                                  whileTap={{ scale: 0.98 }}
-                                  onClick={(e) => { 
-                                    e.stopPropagation(); 
-                                    setMenuMessageId(null); 
-                                    handleDeleteSingleMessage(msg.id); 
-                                  }} 
-                                  className="w-full flex items-start gap-3 p-2 text-left hover:bg-rose-50/50 rounded-xl transition-colors group/item"
-                                >
-                                  <div className="w-8 h-8 rounded-lg bg-rose-50 flex items-center justify-center shrink-0 text-rose-600 transition-colors group-hover/item:bg-rose-100">
-                                    <Trash2 className="w-4 h-4" />
-                                  </div>
-                                  <div className="flex flex-col min-w-0">
-                                    <span className="text-xs font-semibold text-rose-600">Delete Message</span>
-                                    <span className="text-[10px] text-rose-400 mt-0.5 leading-tight">Remove message permanently</span>
-                                  </div>
-                                </motion.button>
-                              </div>
-
-                              <button 
-                                onClick={(e) => { e.stopPropagation(); setMenuMessageId(null); }}
-                                className="w-full mt-1 py-2 text-xs font-bold text-slate-400 hover:text-slate-600 bg-slate-50 hover:bg-slate-100 rounded-xl transition-all active:scale-95 text-center uppercase tracking-wider"
-                              >
-                                Cancel
-                              </button>
-                            </motion.div>
-                          </div>
-                        )}
-                      </AnimatePresence>
+                             <button 
+                               onClick={(e) => { e.stopPropagation(); setMenuMessageId(null); }}
+                               className="mt-2 text-gray-400 hover:text-gray-600 px-4 py-2 text-xs font-medium text-center"
+                             >
+                               Cancel
+                             </button>
+                           </div>
+                        </div>
+                      )}
 
                       {/* Reaction Picker Overlay */}
                       {reactionMessageId === msg.id && (
@@ -1911,24 +1647,16 @@ export function ChatView({ userId, activeContactId: propActiveContactId, setActi
 
         {/* Message Input Box (Always Visible) */}
         <div className={`p-4 bg-white flex items-center justify-center shrink-0 ${!activeProfile ? 'opacity-50 pointer-events-none' : ''}`}>
-          {isConversationBlocked ? (
-            <div className="w-full max-w-2xl bg-rose-50 border border-rose-100 rounded-2xl flex items-center justify-between p-3 px-6 shadow-sm text-rose-700 text-sm font-medium">
-              <div className="flex items-center gap-2.5">
-                <Ban className="w-4 h-4 text-rose-500 shrink-0" />
-                <span>
-                  {isCurrentlyBlocked 
-                    ? "You have blocked this contact." 
-                    : "This user has blocked you or communication is restricted."}
-                </span>
-              </div>
-              {isCurrentlyBlocked && (
-                <button
-                  onClick={handleBlockToggle}
-                  className="text-xs bg-white hover:bg-rose-100 text-rose-700 font-bold px-3.5 py-1.5 rounded-full border border-rose-200 transition-colors cursor-pointer shadow-sm active:scale-95"
-                >
-                  Unblock
-                </button>
-              )}
+          {activeContactId && blockedUsers.includes(activeContactId) ? (
+            <div className="w-full max-w-2xl bg-gray-50 border border-gray-100 rounded-full flex items-center justify-center py-2.5 px-4 gap-3 shadow-sm">
+              <Ban className="w-4 h-4 text-gray-400" />
+              <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">Contact Blocked</span>
+              <button
+                onClick={() => handleUnblockUser(activeContactId)}
+                className="ml-2 text-indigo-600 hover:text-indigo-700 text-xs font-black uppercase tracking-widest hover:underline transition-all"
+              >
+                Unblock
+              </button>
             </div>
           ) : (
             <div className="w-full max-w-2xl bg-gray-50/80 border border-gray-200/80 rounded-full flex items-center p-1.5 shadow-sm focus-within:ring-2 focus-within:ring-indigo-500/20 focus-within:bg-white transition-all">
@@ -2026,12 +1754,12 @@ export function ChatView({ userId, activeContactId: propActiveContactId, setActi
       {/* Profile Details Modal */}
       <AnimatePresence>
         {showProfileDetails && (
-          <div className="fixed inset-0 z-[60] flex items-center justify-center bg-white backdrop-blur-sm">
+          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
             <motion.div
               initial={{ opacity: 0, scale: 0.9, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.9, y: 20 }}
-              className="bg-white w-full h-full overflow-y-auto relative"
+              className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden relative"
             >
               <button 
                 onClick={() => setShowProfileDetails(null)}
@@ -2040,7 +1768,7 @@ export function ChatView({ userId, activeContactId: propActiveContactId, setActi
                 <ArrowLeft className="w-5 h-5 rotate-180" />
               </button>
 
-              <div className="h-16 w-full relative">
+              <div className="h-32 bg-gradient-to-r from-indigo-500 to-purple-600 w-full relative">
                 <div className="absolute -bottom-12 left-1/2 -translate-x-1/2">
                   {showProfileDetails.avatar_url ? (
                     <img 
@@ -2134,7 +1862,21 @@ export function ChatView({ userId, activeContactId: propActiveContactId, setActi
                     </div>
                   </div>
                   <div className="bg-white border border-gray-100 rounded-2xl p-4 shadow-sm flex flex-col justify-center items-center col-span-2">
-                    {/* Removed block/unblock UI */}
+                    {blockedUsers.includes(showProfileDetails.id) ? (
+                      <button 
+                        onClick={() => handleUnblockUser(showProfileDetails.id)}
+                        className="text-[10px] font-bold text-emerald-600 uppercase tracking-widest hover:underline"
+                      >
+                        Unblock User
+                      </button>
+                    ) : (
+                      <button 
+                        onClick={() => handleBlockUser(showProfileDetails.id)}
+                        className="text-[10px] font-bold text-rose-600 uppercase tracking-widest hover:underline"
+                      >
+                        Block User
+                      </button>
+                    )}
                   </div>
                 </div>
 

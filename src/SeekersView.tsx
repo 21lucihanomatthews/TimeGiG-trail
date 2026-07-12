@@ -4,59 +4,18 @@ import { Briefcase, MapPin, Calendar, DollarSign, Upload, Plus, ArrowLeft, Loade
 import { supabase } from './lib/supabase';
 import { SeekerCard } from './components/SeekerCard';
 import { SkeletonCard } from './components/SkeletonCard';
-import { sendFriendRequest } from './lib/chat';
+import { playNotificationSound } from './lib/sound';
+import { sendDesktopNotification } from './lib/notifications';
 
-const DEFAULT_SEEKERS = [
-  {
-    id: '5ee4e400-e29b-41d4-a716-446655440000',
-    title: 'Professional House & Office Cleaner',
-    description: 'Highly detailed and experienced house cleaner available for daily domestic chores, deep cleaning, and office tidying. Trustworthy, reliable, and referenced.',
-    category: 'Cleaning',
-    province: 'Gauteng',
-    location: 'Pretoria',
-    price: 250,
-    is_immediate: true,
-    scheduled_date: null,
-    images: ['https://images.unsplash.com/photo-1581578731548-c64695cc6952?auto=format&fit=crop&q=80&w=600'],
-    user_id: 'a11ce000-0000-0000-0000-000000000000',
-    created_at: new Date().toISOString()
-  },
-  {
-    id: '5ee4e400-e29b-41d4-a716-446655440001',
-    title: 'Expert Gardener & Landscaping Professional',
-    description: 'Over 6 years of experience in lawn mowing, hedge trimming, tree pruning, soil fertilization, and custom landscaping design. Have my own professional tools.',
-    category: 'Gardening',
-    province: 'Western Cape',
-    location: 'Cape Town',
-    price: 350,
-    is_immediate: true,
-    scheduled_date: null,
-    images: ['https://images.unsplash.com/photo-1416879595882-3373a0480b5b?auto=format&fit=crop&q=80&w=600'],
-    user_id: 'b0b00000-0000-0000-0000-000000000000',
-    created_at: new Date().toISOString()
-  },
-  {
-    id: '5ee4e400-e29b-41d4-a716-446655440002',
-    title: 'SIRA Accredited Security Guard',
-    description: 'Professional security guard with advanced surveillance training, access gate control experience, and personal protection. Available for both day/night shifts.',
-    category: 'Security',
-    province: 'KwaZulu-Natal',
-    location: 'Durban',
-    price: 400,
-    is_immediate: false,
-    scheduled_date: new Date(Date.now() + 86400000 * 3).toISOString().split('T')[0],
-    images: ['https://images.unsplash.com/photo-1505673542670-a5e3ff5b14a3?auto=format&fit=crop&q=80&w=600'],
-    user_id: 'c8a111e0-0000-0000-0000-000000000000',
-    created_at: new Date().toISOString()
-  }
-];
+const DEFAULT_SEEKERS: any[] = [];
 
 interface SeekersViewProps {
   onDirectToChat?: (contactId: string, message: string) => void;
+  onViewProfile?: (profile: any) => void;
   key?: string;
 }
 
-export function SeekersView({ onDirectToChat }: SeekersViewProps) {
+export function SeekersView({ onDirectToChat, onViewProfile }: SeekersViewProps) {
   const [view, setView] = useState<'list' | 'create' | 'success'>('list');
   const [seekers, setSeekers] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -94,6 +53,13 @@ export function SeekersView({ onDirectToChat }: SeekersViewProps) {
 
   useEffect(() => {
     if (toastMessage) {
+      if (localStorage.getItem('notify_seekers') !== 'false') {
+        playNotificationSound('notification');
+        sendDesktopNotification('🌟 Talent Directory Alert', {
+          body: toastMessage,
+          tag: 'seeker-toast-alert'
+        });
+      }
       const timer = setTimeout(() => setToastMessage(null), 3500);
       return () => clearTimeout(timer);
     }
@@ -104,35 +70,48 @@ export function SeekersView({ onDirectToChat }: SeekersViewProps) {
     if (view === 'list') {
       fetchSeekers();
     }
+
+    // Subscribe to profile changes for real-time name/avatar updates
+    const profileChannel = supabase
+      .channel('seekers-profile-updates')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'profiles' },
+        () => {
+          if (view === 'list') {
+            fetchSeekers();
+          }
+        }
+      )
+      .subscribe();
+
+    // Subscribe to seekers changes to see new/updated/deleted posts
+    const seekersChannel = supabase
+      .channel('seekers-updates')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'seekers' },
+        () => {
+          if (view === 'list') {
+            fetchSeekers();
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(profileChannel);
+      supabase.removeChannel(seekersChannel);
+    };
   }, [view]);
 
-  // Read mock seekers from localStorage or write default if empty
+  // Local storage helpers
   const getLocalSeekers = () => {
-    try {
-      const data = localStorage.getItem('mock_seekers');
-      if (data) {
-        return JSON.parse(data);
-      } else {
-        localStorage.setItem('mock_seekers', JSON.stringify(DEFAULT_SEEKERS));
-        return DEFAULT_SEEKERS;
-      }
-    } catch {
-      return DEFAULT_SEEKERS;
-    }
+    return [];
   };
 
   const saveLocalSeekers = (newList: any[]) => {
-    try {
-      localStorage.setItem('mock_seekers', JSON.stringify(newList));
-    } catch (e: any) {
-      console.error('Detailed Error saving local seekers:', {
-        message: e?.message || 'Unknown error',
-        code: e?.code || 'N/A',
-        details: e?.details || '',
-        hint: e?.hint || '',
-        fullError: e
-      });
-    }
+    // No-op
   };
 
   const fetchSeekers = async () => {
@@ -141,7 +120,7 @@ export function SeekersView({ onDirectToChat }: SeekersViewProps) {
     try {
       const { data, error: supabaseError } = await supabase
         .from('seekers')
-        .select('*, profiles(id, name, avatar_url, bio, status)')
+        .select('*, profiles(*)')
         .order('created_at', { ascending: false });
 
       if (supabaseError) {
@@ -375,9 +354,7 @@ export function SeekersView({ onDirectToChat }: SeekersViewProps) {
       if (onDirectToChat) {
         onDirectToChat(seeker.user_id, starterMessage);
       } else {
-        // Send connection/friend request in the chat system to link both users
-        await sendFriendRequest(user.id, seeker.user_id);
-        setToastMessage(`Hiring/Contact request sent! Connected with ${seeker.title.split(' ')[0]}. Go to the Chat tab to start messaging!`);
+        setToastMessage(`Hiring/Contact request initiated! Go to the Chat tab to start messaging.`);
       }
     } catch (e: any) {
       console.error('Detailed Error initiating hire:', {
@@ -410,7 +387,7 @@ export function SeekersView({ onDirectToChat }: SeekersViewProps) {
         className="max-w-md mx-auto text-center py-12 space-y-6"
       >
         <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mx-auto">
-          <Users className="w-10 h-10 text-green-600" />
+          <Users className="w-10 h-10 text-indigo-600" />
         </div>
         <h2 className="text-3xl font-bold text-gray-900">Congratulations!</h2>
         <p className="text-gray-500 text-lg">Your seeker profile has been successfully published and is now live for hirers to view and hire you.</p>
@@ -563,7 +540,7 @@ export function SeekersView({ onDirectToChat }: SeekersViewProps) {
     <motion.div
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
-      className="max-w-7xl mx-auto px-4 sm:px-6 py-8"
+      className="h-full w-full flex flex-col overflow-y-auto px-4 sm:px-6 py-8"
     >
       {/* Header */}
       <div className="flex flex-col gap-6 mb-8">
@@ -577,7 +554,7 @@ export function SeekersView({ onDirectToChat }: SeekersViewProps) {
         {/* Search & Filters */}
         <div className="flex flex-col sm:flex-row gap-4">
           <div className="relative flex-1">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 w-5 h-5" />
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-indigo-600 w-5 h-5" />
             <input 
               type="text" 
               placeholder="Search by keywords, services or skill..." 
@@ -648,7 +625,7 @@ export function SeekersView({ onDirectToChat }: SeekersViewProps) {
       ) : filteredSeekers.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-20 text-center">
           <div className="w-24 h-24 bg-gray-100 rounded-full flex items-center justify-center mb-6">
-            <Users className="w-10 h-10 text-gray-400" />
+            <Users className="w-10 h-10 text-indigo-600" />
           </div>
           <h3 className="text-xl font-bold text-gray-900">No Seekers Found</h3>
           <p className="text-gray-500 mt-2 max-w-sm">There are no work seekers matching your filters. Be the first to create a Seeker profile!</p>
@@ -665,6 +642,7 @@ export function SeekersView({ onDirectToChat }: SeekersViewProps) {
                 onDelete={handleDeleteItem} 
                 onViewImage={(images) => { setCurrentImageIndex(0); setViewImages(images); }}
                 onHire={handleHireSeeker}
+                onViewProfile={onViewProfile}
               />
             ))}
           </AnimatePresence>
@@ -702,13 +680,15 @@ export function SeekersView({ onDirectToChat }: SeekersViewProps) {
       </AnimatePresence>
 
       {/* Floating Action Button */}
-      <button
-        onClick={() => { setView('create'); setEditingSeekerId(null); }}
-        className="fixed bottom-8 right-8 p-4 bg-indigo-600 text-white rounded-full shadow-lg hover:bg-indigo-700 transition-transform hover:scale-105 flex items-center justify-center z-50 shadow-indigo-200"
-        title="Become a Seeker"
-      >
-        <Plus className="w-8 h-8" />
-      </button>
+      {!search && (
+        <button
+          onClick={() => { setView('create'); setEditingSeekerId(null); }}
+          className="fixed bottom-8 right-8 p-4 bg-indigo-600 text-white rounded-full shadow-lg hover:bg-indigo-700 transition-transform hover:scale-105 flex items-center justify-center z-50 shadow-indigo-200"
+          title="Become a Seeker"
+        >
+          <Plus className="w-8 h-8" />
+        </button>
+      )}
     </motion.div>
   );
 }

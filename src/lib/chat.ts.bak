@@ -346,41 +346,9 @@ export const fetchContacts = async (userId: string) => {
 
     const profileMap = new Map((profiles || []).map(p => [p.id, p]));
 
-    // EXCLUDE BLOCKED USERS (Both ways)
+    // EXCLUDE BLOCKED USERS
     const blockedUsers = await fetchBlockedUsers(userId);
-    let usersWhoBlockedUs: string[] = [];
-    if (isUUID(userId)) {
-      try {
-        const { data } = await supabase
-          .from('blocked_users')
-          .select('user_id')
-          .eq('blocked_id', userId);
-        if (data) {
-          usersWhoBlockedUs = data.map(b => b.user_id);
-        }
-      } catch (err) {
-        console.warn('Error fetching users who blocked us:', err);
-      }
-    }
-
-    // Also check local blocks where others blocked us
-    try {
-      for (let i = 0; i < localStorage.length; i++) {
-        const key = localStorage.key(i);
-        if (key && key.startsWith('chat_blocked_users_')) {
-          const otherUserId = key.replace('chat_blocked_users_', '');
-          if (otherUserId !== userId) {
-            const blockedList = JSON.parse(localStorage.getItem(key) || '[]');
-            if (blockedList.includes(userId)) {
-              usersWhoBlockedUs.push(otherUserId);
-            }
-          }
-        }
-      }
-    } catch {}
-
-    const allBlockedRelations = Array.from(new Set([...blockedUsers, ...usersWhoBlockedUs]));
-    const nonBlockedFriendIds = validFriendIds.filter(id => !allBlockedRelations.includes(id));
+    const nonBlockedFriendIds = validFriendIds.filter(id => !blockedUsers.includes(id));
 
     // Fetch unread message counts for each contact
     let unreadCountsMap: Record<string, number> = {};
@@ -514,19 +482,13 @@ const getDeletedMessageIds = (): string[] => {
   }
 };
 
-export const markAsDeletedLocally = (ids: string[]) => {
+const markAsDeletedLocally = (ids: string[]) => {
   const current = getDeletedMessageIds();
   const updated = Array.from(new Set([...current, ...ids]));
   localStorage.setItem('deleted_message_ids', JSON.stringify(updated));
 };
 
 export const getLocalMessages = async (userId1: string, userId2: string): Promise<Message[]> => {
-  // If either user has blocked the other, cut off communication completely
-  const blocked = await isBlockedEitherWay(userId1, userId2);
-  if (blocked) {
-    return [];
-  }
-
   const deletedIds = getDeletedMessageIds();
   const clearedAllAt1 = localStorage.getItem(`cleared_all_at_${userId1}`);
   const clearedAllAt2 = localStorage.getItem(`cleared_all_at_${userId2}`);
@@ -605,12 +567,6 @@ export const getLocalMessages = async (userId1: string, userId2: string): Promis
 };
 
 export const sendLocalMessage = async (senderId: string, receiverId: string, content: string): Promise<Message> => {
-  // Prevent sending if blocked
-  const blocked = await isBlockedEitherWay(senderId, receiverId);
-  if (blocked) {
-    throw new Error("Cannot send messages. This conversation is blocked.");
-  }
-
   const newMessage = {
     sender_id: senderId,
     receiver_id: receiverId,
@@ -1070,20 +1026,12 @@ export const clearChat = async (userId1: string, userId2: string) => {
 
 export const blockUser = async (userId: string, blockedId: string) => {
   console.log('[blockUser] Starting...', { userId, blockedId });
+  alert("Block handler called");
   try {
     const localBlocked = getLocalBlocked();
     if (!localBlocked.includes(blockedId)) {
       localBlocked.push(blockedId);
       localStorage.setItem('chat_blocked_users', JSON.stringify(localBlocked));
-    }
-
-    if (userId) {
-      const userBlockedKey = `chat_blocked_users_${userId}`;
-      const userBlocked = getLocalBlockedForUser(userId);
-      if (!userBlocked.includes(blockedId)) {
-        userBlocked.push(blockedId);
-        localStorage.setItem(userBlockedKey, JSON.stringify(userBlocked));
-      }
     }
 
     if (isUUID(userId) && isUUID(blockedId)) {
@@ -1094,8 +1042,10 @@ export const blockUser = async (userId: string, blockedId: string) => {
         alert(error.message);
         throw error;
       }
+      alert("Block successful");
     } else {
       console.log('[blockUser] Skipping Supabase insert - not UUIDs', { userId, blockedId });
+      alert("Block successful (local only)");
     }
     console.log('[blockUser] Completed.');
   } catch (e: any) {
@@ -1107,17 +1057,11 @@ export const blockUser = async (userId: string, blockedId: string) => {
 
 export const unblockUser = async (userId: string, blockedId: string) => {
   console.log('[unblockUser] Starting...', { userId, blockedId });
+  alert("Unblock handler called");
   try {
     const localBlocked = getLocalBlocked();
     const filtered = localBlocked.filter((id: string) => id !== blockedId);
     localStorage.setItem('chat_blocked_users', JSON.stringify(filtered));
-
-    if (userId) {
-      const userBlockedKey = `chat_blocked_users_${userId}`;
-      const userBlocked = getLocalBlockedForUser(userId);
-      const filteredUserBlocked = userBlocked.filter((id: string) => id !== blockedId);
-      localStorage.setItem(userBlockedKey, JSON.stringify(filteredUserBlocked));
-    }
 
     if (isUUID(userId) && isUUID(blockedId)) {
       console.log('[unblockUser] Deleting from Supabase blocked_users');
@@ -1127,8 +1071,10 @@ export const unblockUser = async (userId: string, blockedId: string) => {
         alert(error.message);
         throw error;
       }
+      alert("Unblock successful");
     } else {
       console.log('[unblockUser] Skipping Supabase delete - not UUIDs', { userId, blockedId });
+      alert("Unblock successful (local only)");
     }
     console.log('[unblockUser] Completed.');
   } catch (e: any) {
@@ -1138,48 +1084,8 @@ export const unblockUser = async (userId: string, blockedId: string) => {
   }
 };
 
-export const getLocalBlockedForUser = (userId: string): string[] => {
-  try {
-    const data = localStorage.getItem(`chat_blocked_users_${userId}`);
-    return data ? JSON.parse(data) : [];
-  } catch {
-    return [];
-  }
-};
-
-export const isBlockedEitherWay = async (userId1: string, userId2: string): Promise<boolean> => {
-  if (!userId1 || !userId2) return false;
-
-  // 1. Check if userId1 blocked userId2
-  const blocked1 = getLocalBlockedForUser(userId1);
-  if (blocked1.includes(userId2)) return true;
-
-  // Standard legacy key check
-  const legacyBlocked = getLocalBlocked();
-  if (legacyBlocked.includes(userId2)) return true;
-
-  // 2. Check if userId2 blocked userId1
-  const blocked2 = getLocalBlockedForUser(userId2);
-  if (blocked2.includes(userId1)) return true;
-
-  // 3. Database check if they are both UUIDs
-  if (isUUID(userId1) && isUUID(userId2)) {
-    try {
-      const { data, error } = await supabase
-        .from('blocked_users')
-        .select('*')
-        .or(`and(user_id.eq.${userId1},blocked_id.eq.${userId2}),and(user_id.eq.${userId2},blocked_id.eq.${userId1})`);
-      if (data && data.length > 0) return true;
-    } catch (e) {
-      console.warn('Error checking blocked status in DB:', e);
-    }
-  }
-
-  return false;
-};
-
 export const fetchBlockedUsers = async (userId: string): Promise<string[]> => {
-  const localBlocked = Array.from(new Set([...getLocalBlocked(), ...getLocalBlockedForUser(userId)]));
+  const localBlocked = getLocalBlocked();
   try {
     if (!isUUID(userId)) return localBlocked;
 

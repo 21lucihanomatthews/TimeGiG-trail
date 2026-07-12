@@ -1,6 +1,6 @@
 {
-  "name": "Admin & Referral Platform",
-  "description": "A web app platform featuring a minimal top bar with Admin and Referral Program sections.",
+  "name": "TimeGiG",
+  "description": "An on-demand gig-matching and time-tracking platform with real-time profiles, secure wallet integration, and dynamic peer referrals.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

@@ -4,13 +4,16 @@ import { Briefcase, MapPin, Calendar, DollarSign, Upload, Plus, ArrowLeft, Loade
 import { supabase } from './lib/supabase';
 import { GigCard } from './components/GigCard';
 import { SkeletonCard } from './components/SkeletonCard';
+import { playNotificationSound } from './lib/sound';
+import { sendDesktopNotification } from './lib/notifications';
 
 interface GigsViewProps {
   onDirectToChat?: (contactId: string, message: string) => void;
+  onViewProfile?: (profile: any) => void;
   key?: string;
 }
 
-export function GigsView({ onDirectToChat }: GigsViewProps) {
+export function GigsView({ onDirectToChat, onViewProfile }: GigsViewProps) {
   const [view, setView] = useState<'list' | 'create' | 'success'>('list');
   const [gigs, setGigs] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -45,6 +48,13 @@ export function GigsView({ onDirectToChat }: GigsViewProps) {
 
   useEffect(() => {
     if (toastMessage) {
+      if (localStorage.getItem('notify_gigs') !== 'false') {
+        playNotificationSound('notification');
+        sendDesktopNotification('💼 Gig Hub Update', {
+          body: toastMessage,
+          tag: 'gig-toast-alert'
+        });
+      }
       const timer = setTimeout(() => setToastMessage(null), 3000);
       return () => clearTimeout(timer);
     }
@@ -55,6 +65,39 @@ export function GigsView({ onDirectToChat }: GigsViewProps) {
     if (view === 'list') {
       fetchGigs();
     }
+
+    // Subscribe to profile changes for real-time name/avatar updates
+    const profileChannel = supabase
+      .channel('gigs-profile-updates')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'profiles' },
+        () => {
+          if (view === 'list') {
+            fetchGigs();
+          }
+        }
+      )
+      .subscribe();
+
+    // Subscribe to gigs changes to see new/updated/deleted gigs
+    const gigsChannel = supabase
+      .channel('gigs-updates')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'gigs' },
+        () => {
+          if (view === 'list') {
+            fetchGigs();
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(profileChannel);
+      supabase.removeChannel(gigsChannel);
+    };
   }, [view]);
 
   const fetchGigs = async () => {
@@ -63,7 +106,7 @@ export function GigsView({ onDirectToChat }: GigsViewProps) {
     try {
       const { data, error: supabaseError } = await supabase
         .from('gigs')
-        .select('*, profiles(id, name, avatar_url, bio, status)')
+        .select('*, profiles(*)')
         .order('created_at', { ascending: false });
 
       if (supabaseError) {
@@ -295,7 +338,7 @@ export function GigsView({ onDirectToChat }: GigsViewProps) {
         className="max-w-md mx-auto text-center py-12 space-y-6"
       >
         <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mx-auto">
-          <Briefcase className="w-10 h-10 text-green-600" />
+          <Briefcase className="w-10 h-10 text-indigo-600" />
         </div>
         <h2 className="text-3xl font-bold text-gray-900">Congratulations!</h2>
         <p className="text-gray-500 text-lg">Your gig has been successfully published and is now live for other users to view and apply to.</p>
@@ -459,7 +502,7 @@ export function GigsView({ onDirectToChat }: GigsViewProps) {
     <motion.div
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
-      className="max-w-7xl mx-auto px-4 sm:px-6 py-8"
+      className="h-full w-full flex flex-col overflow-y-auto px-4 sm:px-6 py-8"
     >
       {/* Header */}
       <div className="flex flex-col gap-6 mb-8">
@@ -470,7 +513,7 @@ export function GigsView({ onDirectToChat }: GigsViewProps) {
         {/* Search & Filters */}
         <div className="flex flex-col sm:flex-row gap-4">
           <div className="relative flex-1">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 w-5 h-5" />
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-indigo-600 w-5 h-5" />
             <input 
               type="text" 
               placeholder="Search for gigs..." 
@@ -541,7 +584,7 @@ export function GigsView({ onDirectToChat }: GigsViewProps) {
       ) : filteredGigs.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-20 text-center">
           <div className="w-24 h-24 bg-gray-100 rounded-full flex items-center justify-center mb-6">
-            <Briefcase className="w-10 h-10 text-gray-400" />
+            <Briefcase className="w-10 h-10 text-indigo-600" />
           </div>
           <h3 className="text-xl font-bold text-gray-900">No GiGs Available</h3>
           <p className="text-gray-500 mt-2 max-w-sm">There are currently no active gigs matching your search. Be the first to post a gig.</p>
@@ -550,7 +593,7 @@ export function GigsView({ onDirectToChat }: GigsViewProps) {
         <div className="grid grid-cols-2 gap-4">
           <AnimatePresence>
             {filteredGigs.map((gig: any, idx: number) => (
-              <GigCard key={idx} gig={gig} user={user} onEdit={editGig} onDelete={handleDeleteItem} onViewImage={(images) => { setCurrentImageIndex(0); setViewImages(images); }} onApply={handleApplyGig} />
+              <GigCard key={idx} gig={gig} user={user} onEdit={editGig} onDelete={handleDeleteItem} onViewImage={(images) => { setCurrentImageIndex(0); setViewImages(images); }} onApply={handleApplyGig} onViewProfile={onViewProfile} />
             ))}
           </AnimatePresence>
         </div>
@@ -587,12 +630,14 @@ export function GigsView({ onDirectToChat }: GigsViewProps) {
       </AnimatePresence>
 
       {/* Floating Action Button */}
-      <button
-        onClick={() => { setView('create'); setEditingGigId(null); }}
-        className="fixed bottom-8 right-8 p-4 bg-indigo-600 text-white rounded-full shadow-lg hover:bg-indigo-700 transition-transform hover:scale-105 flex items-center justify-center z-50"
-      >
-        <Plus className="w-8 h-8" />
-      </button>
+      {!search && (
+        <button
+          onClick={() => { setView('create'); setEditingGigId(null); }}
+          className="fixed bottom-8 right-8 p-4 bg-indigo-600 text-white rounded-full shadow-lg hover:bg-indigo-700 transition-transform hover:scale-105 flex items-center justify-center z-50"
+        >
+          <Plus className="w-8 h-8" />
+        </button>
+      )}
     </motion.div>
   );
 }

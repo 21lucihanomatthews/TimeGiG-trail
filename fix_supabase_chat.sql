@@ -41,3 +41,30 @@ create policy "Users can send friend requests."
   on public.friend_requests for insert
   with check ( auth.uid() = sender_id );
 
+
+-- Ensure storage bucket "avatars" exists and is public
+insert into storage.buckets (id, name, public)
+values ('avatars', 'avatars', true)
+on conflict (id) do update set public = true;
+
+-- Allow public read access to objects in avatars bucket
+create policy "Allow public read access to avatars"
+  on storage.objects for select
+  using ( bucket_id = 'avatars' );
+
+-- Allow authenticated users to upload avatars
+create policy "Allow authenticated upload of avatars"
+  on storage.objects for insert
+  with check ( bucket_id = 'avatars' and auth.role() = 'authenticated' );
+
+-- Allow users to update their own avatars
+create policy "Allow users to update their own avatars"
+  on storage.objects for update
+  using ( bucket_id = 'avatars' and auth.uid()::text = (storage.foldername(name))[1] );
+
+-- Allow users to delete their own avatars
+create policy "Allow users to delete their own avatars"
+  on storage.objects for delete
+  using ( bucket_id = 'avatars' and auth.uid()::text = (storage.foldername(name))[1] );
+
+
