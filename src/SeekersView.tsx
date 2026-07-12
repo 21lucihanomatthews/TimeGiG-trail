@@ -369,6 +369,7 @@ export function SeekersView({ onDirectToChat, onViewProfile }: SeekersViewProps)
   };
 
   const filteredSeekers = seekers.filter(seeker => {
+    if (seeker.profiles?.is_discoverable === false) return false;
     const matchesCategory = selectedCategory === 'All' || seeker.category === selectedCategory;
     const matchesSearch = seeker.title.toLowerCase().includes(search.toLowerCase()) || seeker.description.toLowerCase().includes(search.toLowerCase());
     const matchesProvince = !filterProvince || seeker.province === filterProvince;

@@ -48,6 +48,7 @@ export default function App() {
     website?: string;
     skills?: string[];
     pin_code?: string;
+    reward_balance?: number;
   } | null>(null);
   const [showMenuDropdown, setShowMenuDropdown] = useState(false);
   const [notifications, setNotifications] = useState<Array<{ id: string; title: string; body: string; time: string; read: boolean; sourceTab?: Tab }>>([
@@ -425,6 +426,7 @@ export default function App() {
           phone: dbPhone,
           website: dbWebsite,
           skills: dbSkills,
+          reward_balance: data.reward_balance || 0,
         });
         setNewName(fallbackName);
       } else {
@@ -464,7 +466,8 @@ export default function App() {
           title: dbTitle,
           phone: dbPhone,
           website: dbWebsite,
-          skills: dbSkills
+          skills: dbSkills,
+          reward_balance: data?.reward_balance || 0
         };
         setProfile(fallbackProfile);
         setNewName(fallbackProfile.name);
@@ -503,7 +506,8 @@ export default function App() {
         title: dbTitle,
         phone: dbPhone,
         website: dbWebsite,
-        skills: dbSkills
+        skills: dbSkills,
+        reward_balance: 0
       };
       setProfile(fallbackProfile);
       setNewName(fallbackProfile.name);
@@ -554,7 +558,8 @@ export default function App() {
         phone: dbPhone,
         website: dbWebsite,
         skills: dbSkills,
-        pin_code: dbPin
+        pin_code: dbPin,
+        reward_balance: parsedLocal.reward_balance || 0
       });
       setNewName(defaultName);
       setAvatarUrl(dbAvatar);
@@ -2241,10 +2246,17 @@ export default function App() {
                     </div>
                     <select
                       value={profilePrivacy}
-                      onChange={(e) => {
+                      onChange={async (e) => {
                         const val = e.target.value as 'public' | 'private';
                         setProfilePrivacy(val);
                         localStorage.setItem('profile_privacy', val);
+                        if (session?.user?.id) {
+                          try {
+                            await supabase.from('profiles').update({ is_discoverable: val === 'public' }).eq('id', session.user.id);
+                          } catch (err) {
+                            console.error('Failed to update discoverability:', err);
+                          }
+                        }
                       }}
                       className="bg-white border border-gray-200 rounded-lg text-xs font-bold px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                     >
@@ -4141,6 +4153,38 @@ function ReferralView({ userId }: { userId: string; key?: string }) {
           <p className="text-sm text-amber-800 font-medium">
             <strong>Limited Time Offer:</strong> The referral program ends in 90 days. Start inviting friends now to secure your bonuses!
           </p>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+        <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex items-center space-x-4">
+          <div className="p-3 bg-emerald-50 rounded-lg">
+            <Coins className="w-6 h-6 text-emerald-600" />
+          </div>
+          <div>
+            <p className="text-xs text-gray-500 font-medium uppercase tracking-wider">Reward Money</p>
+            <p className="text-xl font-bold text-gray-900">R {stats.pendingRewards.toFixed(2)}</p>
+          </div>
+        </div>
+        <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex items-center space-x-4">
+          <div className="p-3 bg-blue-50 rounded-lg">
+            <Users className="w-6 h-6 text-blue-600" />
+          </div>
+          <div>
+            <p className="text-xs text-gray-500 font-medium uppercase tracking-wider">Verified Referrals</p>
+            <p className="text-xl font-bold text-gray-900">{stats.verifiedCount}</p>
+          </div>
+        </div>
+        <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex items-center space-x-4">
+          <div className="p-3 bg-indigo-50 rounded-lg">
+            <ShieldCheck className="w-6 h-6 text-indigo-600" />
+          </div>
+          <div>
+            <p className="text-xs text-gray-500 font-medium uppercase tracking-wider">Status</p>
+            <p className={`text-sm font-bold ${stats.isCurrentUserVerified ? 'text-green-600' : 'text-amber-600'}`}>
+              {stats.isCurrentUserVerified ? 'Verified' : 'Unverified'}
+            </p>
+          </div>
         </div>
       </div>
 
