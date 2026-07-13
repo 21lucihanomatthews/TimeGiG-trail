@@ -4827,6 +4827,8 @@ function WalletView({ userId, onGoToReferral, onAddNotification, onGoToGigs }: {
   }, [view, userId]);
 
   const fetchWalletData = async () => {
+    console.log('Fetching wallet data for userId:', userId);
+    console.log('Supabase client:', !!supabase);
     setLoading(true);
     try {
       const { data, error } = await supabase
@@ -4848,7 +4850,8 @@ function WalletView({ userId, onGoToReferral, onAddNotification, onGoToGigs }: {
         code: err?.code || 'N/A',
         details: err?.details || '',
         hint: err?.hint || '',
-        fullError: err
+        name: err?.name,
+        stack: err?.stack
       });
     } finally {
       setLoading(false);
