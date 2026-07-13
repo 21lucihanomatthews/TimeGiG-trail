@@ -1671,7 +1671,45 @@ export function ChatView({ userId, activeContactId: propActiveContactId, setActi
                             </div>
                           </div>
                         ) : (
-                          <div className="whitespace-pre-wrap break-words">{msg.content}</div>
+                          <div className="whitespace-pre-wrap break-words">
+                            {/* If the message is a payment proof, truncate the massive base64 part so it's readable */}
+                            {msg.content && msg.content.includes('🔔 [PAYMENT PROOF SUBMISSION]') ? (
+                              <div>
+                                {msg.content.split('data:')[0]}
+                                {msg.content.includes('data:image/') && (
+                                  <div className="mt-3 rounded-lg overflow-hidden border border-white/20 shadow-md max-w-[200px] bg-black/10 p-1">
+                                    <img
+                                      src={msg.content.match(/data:image\/[a-zA-Z]+;base64,[^ \n\r\t]+/)?.[0] || ''}
+                                      alt="Proof of payment"
+                                      className="w-full h-auto max-h-[150px] object-cover cursor-pointer hover:opacity-90 transition-opacity rounded"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        const match = msg.content.match(/data:image\/[a-zA-Z]+;base64,[^ \n\r\t]+/);
+                                        if (match && typeof setFullScreenImage === 'function') {
+                                          setFullScreenImage(match[0]);
+                                        }
+                                      }}
+                                    />
+                                    <div className="text-[10px] text-center mt-1 text-indigo-300 font-medium">Click to view full screen</div>
+                                  </div>
+                                )}
+                                {msg.content.includes('data:application/pdf') && (
+                                  <div className="mt-2">
+                                    <a
+                                      href={msg.content.match(/data:application\/pdf;base64,[^ \n\r\t]+/)?.[0] || '#'}
+                                      download="proof_of_payment.pdf"
+                                      className="inline-flex items-center space-x-1 text-xs text-indigo-200 hover:text-white underline font-bold"
+                                      onClick={(e) => e.stopPropagation()}
+                                    >
+                                      <span>📥 Download PDF Proof</span>
+                                    </a>
+                                  </div>
+                                )}
+                              </div>
+                            ) : (
+                              msg.content
+                            )}
+                          </div>
                         )}
                         
                         {/* Time and Read status */}

@@ -189,6 +189,7 @@ export default function App() {
   }, []);
 
   const previousRequestIdsRef = React.useRef<string[] | null>(null);
+  const notifiedTopupsRef = React.useRef<Record<string, string>>({});
 
   // Load and process incoming promotions
   const checkAndLoadPromotions = useCallback(async () => {
@@ -689,6 +690,149 @@ export default function App() {
     };
   }, [session?.user?.id]);
 
+  // Real-time Postgres changes on topups table for Admin to receive notifications whenever a payment (topup) is submitted
+  useEffect(() => {
+    if (!session?.user?.id) return;
+    const isAdmin = profile?.email?.toLowerCase() === '21lucihanomatthews@gmail.com' || session?.user?.email?.toLowerCase() === '21lucihanomatthews@gmail.com';
+    if (!isAdmin) return;
+
+    const channel = supabase
+      .channel('admin-topup-submissions')
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'topups'
+        },
+        async (payload) => {
+          const topup = payload.new as any;
+          if (!topup) return;
+
+          // Only notify if it's from another user (to avoid self-notification during admin testing)
+          if (topup.user_id === session.user.id) return;
+
+          // Fetch user's name for a better notification message
+          let userName = 'A user';
+          try {
+            const { data } = await supabase
+              .from('profiles')
+              .select('name')
+              .eq('id', topup.user_id)
+              .maybeSingle();
+            if (data?.name) {
+              userName = data.name;
+            }
+          } catch (err) {
+            console.error('Error fetching user name for admin topup notification:', err);
+          }
+
+          const notificationTitle = '🪙 New Payment Proof Submitted';
+          const notificationBody = `${userName} submitted a payment of R ${Number(topup.amount).toFixed(2)} for review.`;
+
+          sendDesktopNotification(notificationTitle, {
+            body: notificationBody,
+            tag: `admin-topup-${topup.id}`,
+          });
+
+          playNotificationSound('notification');
+
+          setNotifications(prev => [
+            {
+              id: `admin-topup-notif-${topup.id}-${Date.now()}`,
+              title: notificationTitle,
+              body: notificationBody,
+              time: 'Just now',
+              read: false,
+              sourceTab: 'admin'
+            },
+            ...prev
+          ]);
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [session?.user?.id, profile?.email, session?.user?.email]);
+
+  // Real-time Postgres changes on topups table to notify users when their topup status changes
+  useEffect(() => {
+    if (!session?.user?.id) return;
+
+    const channel = supabase
+      .channel(`user-topup-changes-${session.user.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'topups',
+          filter: `user_id=eq.${session.user.id}`
+        },
+        (payload) => {
+          const topup = payload.new as any;
+          if (!topup) return;
+
+          // Check if we already sent notification for this topup status
+          if (notifiedTopupsRef.current[topup.id] === topup.status) {
+            return; // Already notified for this status
+          }
+          notifiedTopupsRef.current[topup.id] = topup.status;
+
+          if (topup.status === 'Approved') {
+            sendDesktopNotification('🪙 Topup Approved!', {
+              body: `Your topup of R ${Number(topup.amount).toFixed(2)} has been Approved! Your coins have been added to your wallet.`,
+              tag: `topup-approved-${topup.id}`,
+            });
+
+            playNotificationSound('notification');
+
+            setNotifications(prev => [
+              {
+                id: String(Date.now()),
+                title: '🪙 Topup Approved',
+                body: `Your topup of R ${Number(topup.amount).toFixed(2)} has been Approved! Your coins have been successfully added to your wallet.`,
+                time: 'Just now',
+                read: false,
+                sourceTab: 'wallet'
+              },
+              ...prev
+            ]);
+
+            fetchProfile();
+          } else if (topup.status === 'Rejected') {
+            sendDesktopNotification('❌ Topup Rejected', {
+              body: `Your topup of R ${Number(topup.amount).toFixed(2)} was rejected. Please review the payment proof or details.`,
+              tag: `topup-rejected-${topup.id}`,
+            });
+
+            playNotificationSound('notification');
+
+            setNotifications(prev => [
+              {
+                id: String(Date.now()),
+                title: '❌ Topup Rejected',
+                body: `Your topup of R ${Number(topup.amount).toFixed(2)} was rejected. Please verify your reference or upload a valid payment proof.`,
+                time: 'Just now',
+                read: false,
+                sourceTab: 'wallet'
+              },
+              ...prev
+            ]);
+            
+            fetchProfile();
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [session?.user?.id]);
+
   const [showPinSetupForm, setShowPinSetupForm] = useState(false);
   const [newPinInput, setNewPinInput] = useState('');
   const [confirmNewPinInput, setConfirmNewPinInput] = useState('');
@@ -1044,6 +1188,25 @@ export default function App() {
     setActiveTab('chat');
   };
 
+  const handleAddNotification = useCallback((notif: { title: string; body: string; sourceTab?: Tab }) => {
+    setNotifications(prev => [
+      {
+        id: `custom-notif-${Date.now()}`,
+        title: notif.title,
+        body: notif.body,
+        time: 'Just now',
+        read: false,
+        sourceTab: notif.sourceTab
+      },
+      ...prev
+    ]);
+    sendDesktopNotification(notif.title, {
+      body: notif.body,
+      tag: `notification-${Date.now()}`
+    });
+    playNotificationSound('notification');
+  }, []);
+
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
@@ -1052,8 +1215,26 @@ export default function App() {
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
+    } = supabase.auth.onAuthStateChange((event, session) => {
+      setSession((prevSession) => {
+        if (session && event === 'SIGNED_IN' && !prevSession) {
+          setActiveTab('gigs');
+        }
+        return session;
+      });
+      if (!session) {
+        // Fully clear all user-specific states to prevent any glitches on logout
+        setProfile(null);
+        setActiveTab('gigs');
+        setActiveContactId(null);
+        setProfileToView(null);
+        setUnreadMessagesCount(0);
+        setUnreadRequestsCount(0);
+        setShowProfileModal(false);
+        setShowSettingsModal(false);
+        setShowMenuDropdown(false);
+        notifiedTopupsRef.current = {};
+      }
     });
 
     return () => subscription.unsubscribe();
@@ -1162,7 +1343,7 @@ export default function App() {
       <div className="h-screen h-[100dvh] w-full bg-gray-50 text-gray-900 font-sans flex flex-col overflow-x-hidden overflow-y-hidden relative">
         <BackgroundPattern />
       {/* Top Bar */}
-      <header className={`bg-white border-b border-gray-200 sticky top-0 z-10 w-full shrink-0 ${activeTab === 'chat' ? 'hidden' : ''}`}>
+      <header className="bg-white border-b border-gray-200 sticky top-0 z-10 w-full shrink-0">
         {/* Brand Name ontop of the navigation bar */}
         <div className="bg-white border-b border-gray-100 py-2 md:py-2.5 relative">
           <div className="w-full px-4 sm:px-6 lg:px-8 flex justify-between items-center relative">
@@ -1192,10 +1373,6 @@ export default function App() {
                       alt="Avatar" 
                       className="w-full h-full object-cover cursor-pointer hover:opacity-90 transition-opacity" 
                       referrerPolicy="no-referrer" 
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setFullScreenImage(showProfileModal ? avatarUrl : (profile?.avatar_url || ''));
-                      }}
                     />
                   ) : (
                     <span className="text-[10px] sm:text-xs font-bold">
@@ -1318,21 +1495,37 @@ export default function App() {
                         <button
                           onClick={async () => {
                             try {
-                              await supabase.auth.signOut();
-                              setShowMenuDropdown(false);
+                              await supabase.auth.signOut().catch(() => {});
                             } catch (err: any) {
-                              console.error('Detailed Error during logout:', {
-                                message: err?.message || 'Unknown error',
-                                code: err?.code || 'N/A',
-                                details: err?.details || '',
-                                hint: err?.hint || '',
-                                fullError: err
-                              });
+                              console.error('Error during signout:', err);
+                            } finally {
+                              // Reset state variables completely
+                              setSession(null);
+                              setProfile(null);
+                              setActiveTab('gigs');
+                              setActiveContactId(null);
+                              setProfileToView(null);
+                              setUnreadMessagesCount(0);
+                              setUnreadRequestsCount(0);
+                              setShowProfileModal(false);
+                              setShowSettingsModal(false);
+                              notifiedTopupsRef.current = {};
+                              
+                              // Clear supabase-specific keys from localStorage
+                              const keysToRemove: string[] = [];
+                              for (let i = 0; i < localStorage.length; i++) {
+                                const key = localStorage.key(i);
+                                if (key && (key.includes('supabase') || key.includes('sb-'))) {
+                                  keysToRemove.push(key);
+                                }
+                              }
+                              keysToRemove.forEach(key => localStorage.removeItem(key));
+                              setShowMenuDropdown(false);
                             }
                           }}
                           className="w-full flex items-center space-x-2.5 px-3 py-2.5 text-sm text-rose-600 hover:bg-rose-50 rounded-lg transition-colors text-left font-medium"
                         >
-                          <LogOut className="w-4 h-4 text-indigo-600" />
+                          <LogOut className="w-4 h-4 text-rose-600" />
                           <span>Logout</span>
                         </button>
                       </div>
@@ -1474,7 +1667,7 @@ export default function App() {
         <AnimatePresence mode="wait">
           {activeTab === 'admin' && (profile?.email?.toLowerCase() === '21lucihanomatthews@gmail.com' || session?.user?.email?.toLowerCase() === '21lucihanomatthews@gmail.com') && <AdminView key="admin" onlineUsersCount={onlineUsersCount} setFullScreenImage={setFullScreenImage} />}
           {activeTab === 'referral' && <ReferralView key="referral" userId={session.user.id} />}
-          {activeTab === 'wallet' && <WalletView key="wallet" userId={session.user.id} onGoToReferral={() => setActiveTab('referral')} />}
+          {activeTab === 'wallet' && <WalletView key="wallet" userId={session.user.id} onGoToReferral={() => setActiveTab('referral')} onAddNotification={handleAddNotification} onGoToGigs={() => setActiveTab('gigs')} />}
           {activeTab === 'gigs' && <GigsView key="gigs" onDirectToChat={handleDirectToChat} onViewProfile={handleViewProfile} />}
           {activeTab === 'notifications' && (
             <div key="notifications" className="h-full flex justify-center bg-gray-50 p-4 sm:p-6 lg:p-8">
@@ -2016,7 +2209,7 @@ export default function App() {
                   </div>
                   {profile?.status !== 'Verified' && (
                     <p className="text-xs text-gray-500 mt-2.5 leading-relaxed text-left">
-                      Top up <strong className="font-semibold text-indigo-600">R20</strong> or more in the Wallet to verify your account and unlock referral rewards.
+                      Top up <strong className="font-semibold text-indigo-600">more than R20</strong> in the Wallet to verify your account and unlock referral rewards.
                     </p>
                   )}
                 </div>
@@ -2699,7 +2892,7 @@ export default function App() {
                     <div>
                       <h3 className="font-bold text-gray-900 text-lg">Referral Program <span className="ml-2 inline-flex items-center px-2 py-0.5 bg-amber-100 text-amber-800 text-[10px] rounded-full uppercase tracking-wider font-bold"><Clock className="w-3 h-3 mr-1" /> Ends in 90 Days</span></h3>
                       <p className="text-sm text-gray-600 mt-1">
-                        Share your unique link! When friends sign up and top up R20, you earn <strong>50% commission</strong>. Reach 10 or 15 friends to unlock <strong>cashout bonuses</strong>.
+                        Share your unique link! When friends sign up and top up more than R20, you earn <strong>50% commission</strong>. Reach 10 or 15 friends to unlock <strong>cashout bonuses</strong>.
                       </p>
                     </div>
                   </div>
@@ -3046,15 +3239,33 @@ function AdminView({ onlineUsersCount = 0, setFullScreenImage }: { onlineUsersCo
 
   const fetchAdminData = async () => {
     try {
-      const [profilesRes, topupsRes, referralsRes] = await Promise.all([
-        supabase.from('profiles').select('*'),
-        supabase.from('topups').select('*').order('created_at', { ascending: false }),
-        supabase.from('referrals').select('*')
-      ]);
+      let profiles: any[] = [];
+      let topups: any[] = [];
+      let referrals: any[] = [];
 
-      const profiles = profilesRes.data || [];
-      const topups = topupsRes.data || [];
-      const referrals = referralsRes.data || [];
+      try {
+        const res = await supabase.from('profiles').select('*');
+        if (res.error) throw res.error;
+        profiles = res.data || [];
+      } catch (err) {
+        console.warn('Admin fetch profiles failed:', err);
+      }
+
+      try {
+        const res = await supabase.from('topups').select('*').order('created_at', { ascending: false });
+        if (res.error) throw res.error;
+        topups = res.data || [];
+      } catch (err) {
+        console.warn('Admin fetch topups failed:', err);
+      }
+
+      try {
+        const res = await supabase.from('referrals').select('*');
+        if (res.error) throw res.error;
+        referrals = res.data || [];
+      } catch (err) {
+        console.warn('Admin fetch referrals failed:', err);
+      }
 
       // Enrich topups
       const enrichedTopups = topups.map(pt => {
@@ -3076,7 +3287,7 @@ function AdminView({ onlineUsersCount = 0, setFullScreenImage }: { onlineUsersCo
       const enrichedUsers = profiles.map(p => {
         const userTopups = topups.filter(t => t.user_id === p.id && (t.status === 'Approved' || !t.status)).reduce((sum, t) => sum + Number(t.amount), 0);
         const userReferrals = referrals.filter(r => r.referrer_id === p.id).length;
-        const isVerified = userTopups >= 20;
+        const isVerified = userTopups > 20;
         return { ...p, status: isVerified ? 'Verified' : 'Active', totalTopups: userTopups, referralCount: userReferrals };
       });
 
@@ -3094,7 +3305,7 @@ function AdminView({ onlineUsersCount = 0, setFullScreenImage }: { onlineUsersCo
         
         userReferrals.forEach(r => {
           const rTopups = topups.filter(t => t.user_id === r.referred_id && (t.status === 'Approved' || !t.status)).reduce((sum, t) => sum + Number(t.amount), 0);
-          if (rTopups >= 20) {
+          if (rTopups > 20) {
             verifiedReferrals++;
             commission += (rTopups * 0.5);
             refProfit += (rTopups * 0.5); // Admin logic backwards compatibility
@@ -3151,6 +3362,26 @@ function AdminView({ onlineUsersCount = 0, setFullScreenImage }: { onlineUsersCo
   useEffect(() => {
     fetchAdminData();
     fetchLocalStoragePayouts();
+
+    // Subscribe to topups changes to keep Admin dashboard updated in real-time
+    const channel = supabase
+      .channel('admin-realtime-topups')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'topups'
+        },
+        () => {
+          fetchAdminData();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, []);
 
   const handleReviewTopup = async (id: string, newStatus: 'Approved' | 'Rejected') => {
@@ -3995,10 +4226,10 @@ function ReferralView({ userId }: { userId: string; key?: string }) {
 
         const topupsData = topups || [];
         
-        // Check if current user is verified (has topped up >= 20)
+        // Check if current user is verified (has topped up > 20)
         const currentUserTopups = topupsData.filter(t => t.user_id === userId && (t.status === 'Approved' || !t.status));
         const currentUserTotalTopups = currentUserTopups.reduce((sum, t) => sum + Number(t.amount), 0);
-        const isCurrentUserVerified = currentUserTotalTopups >= 20;
+        const isCurrentUserVerified = currentUserTotalTopups > 20;
 
         let verifiedCount = 0;
         let commissionRewards = 0;
@@ -4007,7 +4238,7 @@ function ReferralView({ userId }: { userId: string; key?: string }) {
           const userTopups = topupsData.filter(t => t.user_id === r.referred_id && (t.status === 'Approved' || !t.status));
           const totalTopups = userTopups.reduce((sum, t) => sum + Number(t.amount), 0);
           
-          const isVerified = totalTopups >= 20;
+          const isVerified = totalTopups > 20;
           if (isVerified) verifiedCount++;
 
           const reward = totalTopups * 0.5;
@@ -4166,7 +4397,7 @@ function ReferralView({ userId }: { userId: string; key?: string }) {
           <div className="flex">
             <div className="ml-3">
               <p className="text-sm text-yellow-700">
-                <strong>Attention:</strong> You must topup R20.00 and up to qualify as a verified user and earn rewards from your referrals.
+                <strong>Attention:</strong> You must topup more than R20.00 to qualify as a verified user and earn rewards from your referrals.
               </p>
             </div>
           </div>
@@ -4328,7 +4559,7 @@ function ReferralView({ userId }: { userId: string; key?: string }) {
                  className="text-sm text-blue-600 hover:text-blue-500 font-medium disabled:opacity-50" 
                  disabled={stats.verifiedCount < 10 || !stats.isCurrentUserVerified || cashoutLoading}
                  onClick={() => setShowCashoutModal(true)}
-                 title={!stats.isCurrentUserVerified ? 'You must top up R20 to cashout' : stats.verifiedCount < 10 ? 'Reach 10 verified users to cashout' : 'Cashout now'}
+                 title={!stats.isCurrentUserVerified ? 'You must top up more than R20 to cashout' : stats.verifiedCount < 10 ? 'Reach 10 verified users to cashout' : 'Cashout now'}
                >
                  {cashoutLoading ? 'Processing...' : 'Cashout'}
                </button>
@@ -4504,11 +4735,11 @@ function ReferralView({ userId }: { userId: string; key?: string }) {
                             <Upload className="mx-auto h-12 w-12 text-gray-400" />
                             <div className="flex text-sm text-gray-600 mt-2">
                               <label
-                                htmlFor="file-upload"
+                                htmlFor="cashout-id-upload"
                                 className="relative cursor-pointer bg-white rounded-md font-medium text-indigo-600 hover:text-indigo-500 focus-within:outline-none focus-within:ring-2 focus-within:ring-offset-2 focus-within:ring-indigo-500"
                               >
                                 <span>Upload a file</span>
-                                <input id="file-upload" name="file-upload" type="file" className="sr-only" onChange={handleFileUpload} accept="image/*,.pdf" />
+                                <input id="cashout-id-upload" name="cashout-id-upload" type="file" className="sr-only" onChange={handleFileUpload} accept="image/*,.pdf" />
                               </label>
                               <p className="pl-1">or drag and drop</p>
                             </div>
@@ -4558,7 +4789,7 @@ const COIN_OPTIONS = [
   { coins: 10000, price: 100 },
 ];
 
-function WalletView({ userId, onGoToReferral }: { userId: string; onGoToReferral?: () => void; key?: string }) {
+function WalletView({ userId, onGoToReferral, onAddNotification, onGoToGigs }: { userId: string; onGoToReferral?: () => void; onAddNotification?: (notif: { title: string; body: string; sourceTab?: Tab }) => void; onGoToGigs?: () => void; key?: string }) {
   const [view, setView] = useState<'overview' | 'topup' | 'payment'>('overview');
   const [selectedOption, setSelectedOption] = useState<{coins: number, price: number} | null>(null);
   const [balance, setBalance] = useState(0);
@@ -4572,6 +4803,27 @@ function WalletView({ userId, onGoToReferral }: { userId: string; onGoToReferral
     if (view === 'overview') {
       fetchWalletData();
     }
+
+    // Subscribe to real-time changes to automatically update transactions & balance instantly!
+    const channel = supabase
+      .channel(`wallet-view-topup-changes-${userId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'topups',
+          filter: `user_id=eq.${userId}`
+        },
+        () => {
+          fetchWalletData();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, [view, userId]);
 
   const fetchWalletData = async () => {
@@ -4611,10 +4863,54 @@ function WalletView({ userId, onGoToReferral }: { userId: string; onGoToReferral
     setReviewMessage('Uploading proof of payment...');
     
     try {
+      const { data: { user } } = await supabase.auth.getUser();
+      
+      if (!user) {
+        throw new Error('User not authenticated');
+      }
+
+      // 1. Ensure the user's profile row exists in the DB to satisfy foreign key constraint
+      try {
+        const { data: existingProfile } = await supabase
+          .from('profiles')
+          .select('id')
+          .eq('id', user.id)
+          .maybeSingle();
+
+        if (!existingProfile) {
+          console.log('Profile row missing before topup. Creating profile row now...');
+          const fallbackName = user.email ? user.email.split('@')[0] : 'User';
+          const metadataAvatar = user.user_metadata?.avatar_url || user.user_metadata?.picture || '';
+          const metadataName = user.user_metadata?.full_name || user.user_metadata?.name || user.user_metadata?.display_name || fallbackName;
+          
+          const { error: profileInsErr } = await supabase
+            .from('profiles')
+            .insert({
+              id: user.id,
+              email: user.email || '',
+              name: metadataName,
+              avatar_url: metadataAvatar,
+              status: 'Active',
+              is_discoverable: true
+            });
+          if (profileInsErr) {
+            console.warn('Profile auto-creation error:', profileInsErr.message);
+          }
+        }
+      } catch (profileErr) {
+        console.warn('Failed to verify profile row before topup:', profileErr);
+      }
+
       let proofUrl = '';
       
+      // 2. Upload file to Supabase Storage bucket 'avatars' at path 'proofs/*'
+      const fileExt = uploadFile.name.split('.').pop() || 'jpg';
+      const fileName = `${user.id}-${Date.now()}-${Math.random().toString(36).substring(7)}.${fileExt}`;
+      const storagePath = `proofs/${fileName}`;
+
       if (uploadFile.type.startsWith('image/')) {
-        proofUrl = await new Promise((resolve, reject) => {
+        setReviewMessage('Optimizing proof of payment image...');
+        const resizedBlob: Blob = await new Promise((resolve, reject) => {
           const reader = new FileReader();
           reader.onload = (e) => {
             const img = new Image();
@@ -4636,7 +4932,13 @@ function WalletView({ userId, onGoToReferral }: { userId: string; onGoToReferral
               canvas.height = height;
               const ctx = canvas.getContext('2d');
               ctx?.drawImage(img, 0, 0, width, height);
-              resolve(canvas.toDataURL('image/jpeg', 0.8));
+              canvas.toBlob((blob) => {
+                if (blob) {
+                  resolve(blob);
+                } else {
+                  reject(new Error('Canvas conversion to blob failed'));
+                }
+              }, 'image/jpeg', 0.8);
             };
             img.onerror = reject;
             img.src = e.target?.result as string;
@@ -4644,39 +4946,134 @@ function WalletView({ userId, onGoToReferral }: { userId: string; onGoToReferral
           reader.onerror = reject;
           reader.readAsDataURL(uploadFile);
         });
+
+        setReviewMessage('Uploading optimized payment proof...');
+        const { error: uploadError } = await supabase.storage
+          .from('avatars')
+          .upload(storagePath, resizedBlob, {
+            contentType: 'image/jpeg',
+            cacheControl: '3600'
+          });
+        if (uploadError) throw uploadError;
+
+        const { data: { publicUrl } } = supabase.storage
+          .from('avatars')
+          .getPublicUrl(storagePath);
+        proofUrl = publicUrl;
       } else {
-        // For PDFs or other files
-        const reader = new FileReader();
-        proofUrl = await new Promise((resolve, reject) => {
-          reader.onloadend = () => resolve(reader.result as string);
-          reader.onerror = reject;
-          reader.readAsDataURL(uploadFile);
-        });
+        setReviewMessage('Uploading payment proof...');
+        const { error: uploadError } = await supabase.storage
+          .from('avatars')
+          .upload(storagePath, uploadFile, {
+            contentType: uploadFile.type,
+            cacheControl: '3600'
+          });
+        if (uploadError) throw uploadError;
+
+        const { data: { publicUrl } } = supabase.storage
+          .from('avatars')
+          .getPublicUrl(storagePath);
+        proofUrl = publicUrl;
       }
 
       setReviewMessage('Submitting topup request...');
 
-      const { data: { user } } = await supabase.auth.getUser();
-      
-      if (!user) {
-        throw new Error('User not authenticated');
+      // Fetch the admin's profile ID to send a backup message directly via chat
+      let adminId = '';
+      let senderName = user.email || 'A user';
+      try {
+        const { data: adminData } = await supabase
+          .from('profiles')
+          .select('id')
+          .eq('email', '21lucihanomatthews@gmail.com')
+          .maybeSingle();
+        if (adminData?.id) {
+          adminId = adminData.id;
+        }
+
+        const { data: userData } = await supabase
+          .from('profiles')
+          .select('name')
+          .eq('id', user.id)
+          .maybeSingle();
+        if (userData?.name) {
+          senderName = userData.name;
+        }
+      } catch (err) {
+        console.warn('Failed to query admin/user details for chat fallback:', err);
       }
 
-      const { error: insertError } = await supabase.from('topups').insert({
-        user_id: user.id,
-        amount: selectedOption.price,
-        status: 'Pending',
-        proof_url: proofUrl
-      });
-      
-      if (insertError) {
-        console.error('Insert error:', insertError);
-        setReviewMessage(`Database Error: Please run the SQL migration in your Supabase dashboard to add 'status' and 'proof_url' columns to the 'topups' table. Error: ${insertError.message}`);
-        setIsSubmitting(false);
-        return;
+      // Attempt DB insert into the 'topups' table first
+      let dbInsertSuccess = true;
+      try {
+        const { error: insertError } = await supabase.from('topups').insert({
+          user_id: user.id,
+          amount: selectedOption.price,
+          status: 'Pending',
+          proof_url: proofUrl,
+          updated_at: new Date().toISOString()
+        });
+
+        if (insertError) {
+          console.warn('Failed to write to topups table, using secure chat channel fallback:', insertError);
+          dbInsertSuccess = false;
+        }
+      } catch (err) {
+        console.warn('Database error while inserting topup:', err);
+        dbInsertSuccess = false;
       }
-      
-      setReviewMessage('Your proof of payment has been submitted for review. Coins will be credited once approved.');
+
+      // Construct a structured message containing the payment details
+      let notificationContent = `🔔 [PAYMENT PROOF SUBMISSION]
+User: ${senderName}
+Amount: R ${selectedOption.price.toFixed(2)} (${selectedOption.coins} Coins)
+Status: Pending
+Proof of payment submitted. Please review this topup request on your Admin Dashboard under the Topups tab.
+Proof Link: ${proofUrl}`;
+
+      if (!dbInsertSuccess) {
+        notificationContent += `\n\n⚠️ [Critical Fallback: Topup database registration failed. Proof media link attached below:]\n${proofUrl}`;
+      }
+
+      // Always try to send the direct chat message to the admin so they get an instant notification!
+      if (adminId) {
+        try {
+          const { error: msgErr } = await supabase.from('messages').insert({
+            sender_id: user.id,
+            receiver_id: adminId,
+            content: notificationContent,
+            created_at: new Date().toISOString(),
+            is_read: false
+          });
+          if (msgErr) {
+            console.warn('Failed to send instant payment proof chat message to admin:', msgErr.message);
+          }
+        } catch (msgErr) {
+          console.warn('Failed to send instant payment proof chat message to admin:', msgErr);
+        }
+      }
+
+      if (dbInsertSuccess) {
+        setReviewMessage('Your proof of payment has been submitted for review. Coins will be credited once approved.');
+      } else {
+        setReviewMessage('Proof submitted securely to Admin via fallback chat message! Coins will be credited once approved.');
+      }
+
+      // Add a review notification message for the user who completed the topup submission
+      if (onAddNotification) {
+        onAddNotification({
+          title: '🪙 Topup Under Review',
+          body: `Your topup request of R ${selectedOption.price.toFixed(2)} (${selectedOption.coins} Coins) has been submitted. It is now under review by an admin.`,
+          sourceTab: 'wallet'
+        });
+      } else {
+        // Fallback if not passed
+        sendDesktopNotification('🪙 Topup Submitted', {
+          body: `Your topup request of R ${selectedOption.price.toFixed(2)} has been submitted and is under review.`,
+          tag: `topup-review-${Date.now()}`
+        });
+        playNotificationSound('notification');
+      }
       
       setTimeout(() => {
         setReviewMessage('');
@@ -4684,7 +5081,10 @@ function WalletView({ userId, onGoToReferral }: { userId: string; onGoToReferral
         setUploadFile(null);
         setSelectedOption(null);
         setView('overview');
-      }, 2500);
+        if (onGoToGigs) {
+          onGoToGigs();
+        }
+      }, 3500);
       
     } catch (err: any) {
       console.error('Detailed Error submitting topup:', {
@@ -4694,7 +5094,7 @@ function WalletView({ userId, onGoToReferral }: { userId: string; onGoToReferral
         hint: err?.hint || '',
         fullError: err
       });
-      setReviewMessage('Failed to submit. Please try again.');
+      setReviewMessage(`Failed to submit. ${err?.message || 'Please try again.'}`);
       setIsSubmitting(false);
     }
   };
@@ -4721,7 +5121,7 @@ function WalletView({ userId, onGoToReferral }: { userId: string; onGoToReferral
           <div className="bg-blue-50 border border-blue-200 text-blue-700 px-4 py-6 rounded-lg text-center shadow-sm">
             <div className="flex justify-center mb-4"><Loader2 className="w-8 h-8 animate-spin text-indigo-600" /></div>
             <p className="font-medium text-lg">{reviewMessage}</p>
-            <p className="text-sm mt-2 text-blue-600">Redirecting to wallet...</p>
+            <p className="text-sm mt-2 text-blue-600">Redirecting to gigs...</p>
           </div>
         ) : (
           <div className="bg-white shadow sm:rounded-lg border border-gray-100 overflow-hidden">
@@ -4757,11 +5157,11 @@ function WalletView({ userId, onGoToReferral }: { userId: string; onGoToReferral
                       <Upload className="mx-auto h-12 w-12 text-indigo-600" />
                       <div className="flex text-sm text-gray-600 justify-center">
                         <label
-                          htmlFor="file-upload"
+                          htmlFor="payment-proof-upload"
                           className="relative cursor-pointer bg-white rounded-md font-medium text-blue-600 hover:text-blue-500 focus-within:outline-none focus-within:ring-2 focus-within:ring-offset-2 focus-within:ring-blue-500"
                         >
                           <span>{uploadFile ? uploadFile.name : 'Upload a file'}</span>
-                          <input id="file-upload" name="file-upload" type="file" className="sr-only" accept="image/*,.pdf" onChange={(e) => setUploadFile(e.target.files?.[0] || null)} required />
+                          <input id="payment-proof-upload" name="payment-proof-upload" type="file" className="sr-only" accept="image/*,.pdf" onChange={(e) => setUploadFile(e.target.files?.[0] || null)} required />
                         </label>
                       </div>
                       <p className="text-xs text-gray-500">PNG, JPG, PDF up to 5MB</p>
