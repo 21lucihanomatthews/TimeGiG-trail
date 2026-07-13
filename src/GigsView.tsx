@@ -45,6 +45,25 @@ export function GigsView({ onDirectToChat, onViewProfile }: GigsViewProps) {
   const [viewImages, setViewImages] = useState<string[] | null>(null);
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [isUsingLocalFallback, setIsUsingLocalFallback] = useState(false);
+
+  // Local storage helpers
+  const getLocalGigs = () => {
+    try {
+      const saved = localStorage.getItem('local_gigs');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  };
+
+  const saveLocalGigs = (newList: any[]) => {
+    try {
+      localStorage.setItem('local_gigs', JSON.stringify(newList));
+    } catch (e) {
+      console.error(e);
+    }
+  };
 
   useEffect(() => {
     if (toastMessage) {
@@ -114,18 +133,22 @@ export function GigsView({ onDirectToChat, onViewProfile }: GigsViewProps) {
                               supabaseError.message?.toLowerCase().includes('does not exist') ||
                               supabaseError.message?.toLowerCase().includes('relation');
         if (isMissingTable) {
-          console.warn('Gigs table not found or accessible. Using empty list fallback.');
-          setGigs([]);
+          console.warn('Gigs table not found or accessible. Using local fallback.');
+          setIsUsingLocalFallback(true);
+          setGigs(getLocalGigs());
         } else {
           console.warn('Supabase error fetching gigs, falling back:', supabaseError);
-          setGigs([]);
+          setIsUsingLocalFallback(true);
+          setGigs(getLocalGigs());
         }
       } else {
         setGigs(data || []);
+        setIsUsingLocalFallback(false);
       }
     } catch (err: any) {
       console.warn('Unexpected error fetching gigs, falling back:', err?.message || err);
-      setGigs([]);
+      setIsUsingLocalFallback(true);
+      setGigs(getLocalGigs());
     } finally {
       setLoading(false);
     }
@@ -140,6 +163,14 @@ export function GigsView({ onDirectToChat, onViewProfile }: GigsViewProps) {
       // 2. Define the delete function
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error("No user found");
+
+      if (isUsingLocalFallback) {
+        const updated = getLocalGigs().filter((g: any) => g.id !== id);
+        saveLocalGigs(updated);
+        setToastMessage('Gig deleted successfully.');
+        await fetchGigs();
+        return;
+      }
 
       // 3. Execute the deletion
       const { error } = await supabase
@@ -282,28 +313,62 @@ export function GigsView({ onDirectToChat, onViewProfile }: GigsViewProps) {
         created_at: new Date().toISOString()
       };
 
-      let error;
-      if (editingGigId) {
-        ({ error } = await supabase
-          .from('gigs')
-          .update(newGig)
-          .eq('id', editingGigId));
+      if (isUsingLocalFallback) {
+        let localList = getLocalGigs();
+        const storedGig = {
+          id: editingGigId || 'gig-' + Math.random().toString(36).substring(2, 11),
+          ...newGig,
+          profiles: {
+            id: user?.id,
+            name: user?.user_metadata?.full_name || user?.user_metadata?.name || user?.email || 'Anonymous',
+            avatar_url: user?.user_metadata?.avatar_url || ''
+          }
+        };
+        if (editingGigId) {
+          localList = localList.map((g: any) => g.id === editingGigId ? { ...g, ...storedGig } : g);
+        } else {
+          localList = [storedGig, ...localList];
+        }
+        saveLocalGigs(localList);
       } else {
-        ({ error } = await supabase
-          .from('gigs')
-          .insert([newGig]));
+        let error;
+        if (editingGigId) {
+          ({ error } = await supabase
+            .from('gigs')
+            .update(newGig)
+            .eq('id', editingGigId));
+        } else {
+          ({ error } = await supabase
+            .from('gigs')
+            .insert([newGig]));
+        }
+
+        if (error) {
+          if (error.code === '42P01') {
+            let localList = getLocalGigs();
+            const storedGig = {
+              id: editingGigId || 'gig-' + Math.random().toString(36).substring(2, 11),
+              ...newGig,
+              profiles: {
+                id: user?.id,
+                name: user?.user_metadata?.full_name || user?.user_metadata?.name || user?.email || 'Anonymous',
+                avatar_url: user?.user_metadata?.avatar_url || ''
+              }
+            };
+            if (editingGigId) {
+              localList = localList.map((g: any) => g.id === editingGigId ? { ...g, ...storedGig } : g);
+            } else {
+              localList = [storedGig, ...localList];
+            }
+            saveLocalGigs(localList);
+            setIsUsingLocalFallback(true);
+          } else {
+            throw error;
+          }
+        }
       }
 
-      if (error) {
-        if (error.code === '42P01') {
-          // Table doesn't exist, we will just simulate success and add to local state
-          setGigs([newGig, ...gigs]);
-        } else {
-          throw error;
-        }
-      } else {
-        await fetchGigs();
-      }
+      await fetchGigs();
 
       setView('list');
       setEditingGigId(null);
@@ -593,7 +658,7 @@ export function GigsView({ onDirectToChat, onViewProfile }: GigsViewProps) {
         <div className="grid grid-cols-2 gap-4">
           <AnimatePresence>
             {filteredGigs.map((gig: any, idx: number) => (
-              <GigCard key={idx} gig={gig} user={user} onEdit={editGig} onDelete={handleDeleteItem} onViewImage={(images) => { setCurrentImageIndex(0); setViewImages(images); }} onApply={handleApplyGig} onViewProfile={onViewProfile} />
+              <GigCard key={gig.id || idx} gig={gig} user={user} onEdit={editGig} onDelete={handleDeleteItem} onViewImage={(images) => { setCurrentImageIndex(0); setViewImages(images); }} onApply={handleApplyGig} onViewProfile={onViewProfile} />
             ))}
           </AnimatePresence>
         </div>

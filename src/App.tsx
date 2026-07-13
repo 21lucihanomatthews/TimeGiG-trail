@@ -591,6 +591,14 @@ export default function App() {
   }, [showProfileModal, profile]);
 
   useEffect(() => {
+    if (profile?.status === 'Disabled') {
+      setIsOffline(true);
+    } else {
+      setIsOffline(typeof navigator !== 'undefined' ? !navigator.onLine : false);
+    }
+  }, [profile?.status]);
+
+  useEffect(() => {
     // Setup the real network online/offline listeners
     const cleanupOffline = setupOfflineListeners(
       () => {
@@ -600,9 +608,11 @@ export default function App() {
         }
       },
       () => {
-        setIsOffline(false);
-        if (localStorage.getItem('notify_network') !== 'false') {
-          playNotificationSound('notification');
+        if (profile?.status !== 'Disabled') {
+          setIsOffline(false);
+          if (localStorage.getItem('notify_network') !== 'false') {
+            playNotificationSound('notification');
+          }
         }
       }
     );
@@ -610,7 +620,7 @@ export default function App() {
     return () => {
       cleanupOffline();
     };
-  }, []);
+  }, [profile?.status]);
 
   // Real-time Postgres changes on profiles table to trigger in-app notifications
   useEffect(() => {
@@ -1034,7 +1044,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!session) return;
+    if (!session || profile?.status === 'Disabled') return;
     
     const channel = supabase.channel('online-users', {
       config: {
@@ -1058,7 +1068,7 @@ export default function App() {
     return () => {
       channel.unsubscribe();
     };
-  }, [session]);
+  }, [session, profile?.status]);
 
   if (loading) {
     return (

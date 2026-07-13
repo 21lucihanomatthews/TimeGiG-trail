@@ -20,6 +20,16 @@ export function GigCard({ gig, user, onEdit, onDelete, onViewImage, onApply, onV
 
   const isCompact = localStorage.getItem('compact_layout') === 'true';
 
+  const gigProfile = gig.profiles || (user?.id === gig.user_id ? {
+    id: user?.id,
+    name: user?.user_metadata?.full_name || user?.user_metadata?.name || user?.email?.split('@')[0] || 'Me',
+    avatar_url: user?.user_metadata?.avatar_url || ''
+  } : {
+    id: gig.user_id,
+    name: 'Anonymous User',
+    avatar_url: ''
+  });
+
   if (isCompact) {
     return (
       <motion.div
@@ -48,7 +58,7 @@ export function GigCard({ gig, user, onEdit, onDelete, onViewImage, onApply, onV
             <h3 className="font-bold text-gray-900 truncate">{gig.title}</h3>
             <div className="flex items-center gap-2 text-[9px] text-gray-500 mt-0.5">
               <span className="flex items-center gap-0.5"><MapPin className="w-2.5 h-2.5" /> {gig.location}</span>
-              <span className="truncate max-w-[120px] font-medium text-gray-400">by {gig.profiles?.name || 'Anonymous'}</span>
+              <span className="truncate max-w-[120px] font-medium text-gray-400">by {gigProfile?.name || 'Anonymous'}</span>
             </div>
           </div>
         </div>
@@ -109,26 +119,26 @@ export function GigCard({ gig, user, onEdit, onDelete, onViewImage, onApply, onV
         {/* Creator Info */}
         <div 
           className="flex items-center space-x-2 mb-3 p-2 bg-gray-50 rounded-xl border border-gray-100 cursor-pointer hover:bg-gray-100 transition-colors"
-          onClick={() => onViewProfile?.(gig.profiles)}
+          onClick={() => onViewProfile?.(gigProfile)}
         >
-          {gig.profiles?.avatar_url ? (
+          {gigProfile?.avatar_url ? (
             <img 
-              src={gig.profiles.avatar_url} 
-              alt={gig.profiles.name} 
+              src={gigProfile.avatar_url} 
+              alt={gigProfile.name} 
               className="w-8 h-8 rounded-full object-cover border border-white shadow-sm"
               referrerPolicy="no-referrer"
             />
           ) : (
-            <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-[10px] shrink-0 border border-white shadow-sm ${getAvatarColorClass(gig.profiles?.name)}`}>
-              {getInitials(gig.profiles?.name)}
+            <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-[10px] shrink-0 border border-white shadow-sm ${getAvatarColorClass(gigProfile?.name)}`}>
+              {getInitials(gigProfile?.name)}
             </div>
           )}
           <div className="min-w-0">
             <p className="text-[10px] font-bold text-gray-900 truncate">
-              {gig.profiles?.name || 'Anonymous User'}
+              {gigProfile?.name || 'Anonymous User'}
             </p>
             <p className="text-[9px] text-gray-400 truncate">
-              {gig.profiles?.status === 'Verified' ? 'Verified Professional' : 'Active Member'}
+              {gigProfile?.status === 'Verified' ? 'Verified Professional' : 'Active Member'}
             </p>
           </div>
         </div>

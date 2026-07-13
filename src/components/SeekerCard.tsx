@@ -20,6 +20,16 @@ export function SeekerCard({ seeker, user, onEdit, onDelete, onViewImage, onHire
 
   const isCompact = localStorage.getItem('compact_layout') === 'true';
 
+  const seekerProfile = seeker.profiles || (user?.id === seeker.user_id ? {
+    id: user?.id,
+    name: user?.user_metadata?.full_name || user?.user_metadata?.name || user?.email?.split('@')[0] || 'Me',
+    avatar_url: user?.user_metadata?.avatar_url || ''
+  } : {
+    id: seeker.user_id,
+    name: 'Anonymous User',
+    avatar_url: ''
+  });
+
   if (isCompact) {
     return (
       <motion.div
@@ -48,7 +58,7 @@ export function SeekerCard({ seeker, user, onEdit, onDelete, onViewImage, onHire
             <h3 className="font-bold text-gray-900 truncate">{seeker.title}</h3>
             <div className="flex items-center gap-2 text-[9px] text-gray-500 mt-0.5">
               <span className="flex items-center gap-0.5"><MapPin className="w-2.5 h-2.5" /> {seeker.location}</span>
-              <span className="truncate max-w-[120px] font-medium text-gray-400">by {seeker.profiles?.name || 'Anonymous'}</span>
+              <span className="truncate max-w-[120px] font-medium text-gray-400">by {seekerProfile?.name || 'Anonymous'}</span>
             </div>
           </div>
         </div>
@@ -111,26 +121,26 @@ export function SeekerCard({ seeker, user, onEdit, onDelete, onViewImage, onHire
         {/* Creator Info */}
         <div 
           className="flex items-center space-x-2 mb-3 p-2 bg-gray-50 rounded-xl border border-gray-100 cursor-pointer hover:bg-gray-100 transition-colors"
-          onClick={() => onViewProfile?.(seeker.profiles)}
+          onClick={() => onViewProfile?.(seekerProfile)}
         >
-          {seeker.profiles?.avatar_url ? (
+          {seekerProfile?.avatar_url ? (
             <img 
-              src={seeker.profiles.avatar_url} 
-              alt={seeker.profiles.name} 
+              src={seekerProfile.avatar_url} 
+              alt={seekerProfile.name} 
               className="w-8 h-8 rounded-full object-cover border border-white shadow-sm"
               referrerPolicy="no-referrer"
             />
           ) : (
-            <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-[10px] shrink-0 border border-white shadow-sm ${getAvatarColorClass(seeker.profiles?.name)}`}>
-              {getInitials(seeker.profiles?.name)}
+            <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-[10px] shrink-0 border border-white shadow-sm ${getAvatarColorClass(seekerProfile?.name)}`}>
+              {getInitials(seekerProfile?.name)}
             </div>
           )}
           <div className="min-w-0">
             <p className="text-[10px] font-bold text-gray-900 truncate">
-              {seeker.profiles?.name || 'Anonymous User'}
+              {seekerProfile?.name || 'Anonymous User'}
             </p>
             <p className="text-[9px] text-gray-400 truncate">
-              {seeker.profiles?.status === 'Verified' ? 'Verified Professional' : 'Active Member'}
+              {seekerProfile?.status === 'Verified' ? 'Verified Professional' : 'Active Member'}
             </p>
           </div>
         </div>

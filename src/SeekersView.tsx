@@ -107,11 +107,20 @@ export function SeekersView({ onDirectToChat, onViewProfile }: SeekersViewProps)
 
   // Local storage helpers
   const getLocalSeekers = () => {
-    return [];
+    try {
+      const saved = localStorage.getItem('local_seekers');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
   };
 
   const saveLocalSeekers = (newList: any[]) => {
-    // No-op
+    try {
+      localStorage.setItem('local_seekers', JSON.stringify(newList));
+    } catch (e) {
+      console.error(e);
+    }
   };
 
   const fetchSeekers = async () => {
@@ -276,10 +285,19 @@ export function SeekersView({ onDirectToChat, onViewProfile }: SeekersViewProps)
 
       if (isUsingLocalFallback) {
         let localList = getLocalSeekers();
+        const storedSeeker = {
+          id: editingSeekerId || 'seeker-' + Math.random().toString(36).substring(2, 11),
+          ...newSeeker,
+          profiles: {
+            id: user?.id,
+            name: user?.user_metadata?.full_name || user?.user_metadata?.name || user?.email || 'Anonymous',
+            avatar_url: user?.user_metadata?.avatar_url || ''
+          }
+        };
         if (editingSeekerId) {
-          localList = localList.map((s: any) => s.id === editingSeekerId ? { ...s, ...newSeeker } : s);
+          localList = localList.map((s: any) => s.id === editingSeekerId ? { ...s, ...storedSeeker } : s);
         } else {
-          localList = [{ id: 'seeker-' + Math.random().toString(36).substring(2, 11), ...newSeeker }, ...localList];
+          localList = [storedSeeker, ...localList];
         }
         saveLocalSeekers(localList);
       } else {
@@ -298,12 +316,22 @@ export function SeekersView({ onDirectToChat, onViewProfile }: SeekersViewProps)
         if (error) {
           if (error.code === '42P01') {
             let localList = getLocalSeekers();
+            const storedSeeker = {
+              id: editingSeekerId || 'seeker-' + Math.random().toString(36).substring(2, 11),
+              ...newSeeker,
+              profiles: {
+                id: user?.id,
+                name: user?.user_metadata?.full_name || user?.user_metadata?.name || user?.email || 'Anonymous',
+                avatar_url: user?.user_metadata?.avatar_url || ''
+              }
+            };
             if (editingSeekerId) {
-              localList = localList.map((s: any) => s.id === editingSeekerId ? { ...s, ...newSeeker } : s);
+              localList = localList.map((s: any) => s.id === editingSeekerId ? { ...s, ...storedSeeker } : s);
             } else {
-              localList = [{ id: 'seeker-' + Math.random().toString(36).substring(2, 11), ...newSeeker }, ...localList];
+              localList = [storedSeeker, ...localList];
             }
             saveLocalSeekers(localList);
+            setIsUsingLocalFallback(true);
           } else {
             throw error;
           }
