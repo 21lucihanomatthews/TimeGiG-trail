@@ -1,6 +1,6 @@
-import React from 'react';
-import { MapPin, Heart, Share2, Briefcase, Eye, Users, Edit2, Trash2 } from 'lucide-react';
-import { motion } from 'motion/react';
+import React, { useState } from 'react';
+import { MapPin, Heart, Share2, Briefcase, Eye, Users, Edit2, Trash2, X, Copy, Check } from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
 import { getInitials, getAvatarColorClass } from '../lib/avatar';
 
 interface GigCardProps {
@@ -19,6 +19,8 @@ export function GigCard({ gig, user, onEdit, onDelete, onViewImage, onApply, onV
   console.log('GigCard debug:', { isOwner, userId: user?.id, gigUserId: gig.user_id });
 
   const isCompact = localStorage.getItem('compact_layout') === 'true';
+  const [showShareMenu, setShowShareMenu] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   const gigProfile = gig.profiles || (user?.id === gig.user_id ? {
     id: user?.id,
@@ -30,12 +32,38 @@ export function GigCard({ gig, user, onEdit, onDelete, onViewImage, onApply, onV
     avatar_url: ''
   });
 
+  // Construct sharing details
+  const getShareUrl = () => {
+    if (typeof window === 'undefined') return '';
+    // Append tab and gig ID to make a clean deep link
+    return `${window.location.origin}${window.location.pathname}?tab=gigs&id=${gig.id}`;
+  };
+
+  const shareUrl = getShareUrl();
+  const shareText = `Check out this job on TimeGiG: "${gig.title}" in ${gig.location}. Offering R ${Number(gig.price || 0).toLocaleString()}!`;
+
+  const whatsappUrl = `https://api.whatsapp.com/send?text=${encodeURIComponent(shareText + ' ' + shareUrl)}`;
+  const facebookUrl = `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(shareUrl)}`;
+  const twitterUrl = `https://twitter.com/intent/tweet?text=${encodeURIComponent(shareText)}&url=${encodeURIComponent(shareUrl)}`;
+  const linkedinUrl = `https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(shareUrl)}`;
+
+  const handleCopyLink = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error('Failed to copy link:', err);
+    }
+  };
+
   if (isCompact) {
     return (
       <motion.div
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
-        className="bg-white rounded-xl shadow-xs border border-gray-100 p-2.5 hover:shadow-sm transition-shadow duration-300 flex items-center justify-between text-gray-900 gap-3 text-xs w-full"
+        className="bg-white rounded-xl shadow-xs border border-gray-100 p-2.5 hover:shadow-sm transition-shadow duration-300 flex items-center justify-between text-gray-900 gap-3 text-xs w-full relative overflow-hidden"
       >
         {/* Left info */}
         <div className="flex items-center gap-2.5 min-w-0 flex-1">
@@ -65,6 +93,13 @@ export function GigCard({ gig, user, onEdit, onDelete, onViewImage, onApply, onV
 
         {/* Right Actions */}
         <div className="flex items-center gap-1.5 shrink-0">
+          <button 
+            onClick={(e) => { e.stopPropagation(); setShowShareMenu(true); }} 
+            className="p-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-lg font-medium transition-colors"
+            title="Share Gig"
+          >
+            <Share2 className="w-3.5 h-3.5" />
+          </button>
           {isOwner ? (
             <>
               <button onClick={() => onEdit(gig)} className="p-1.5 bg-gray-50 hover:bg-gray-100 text-gray-700 rounded-lg font-medium transition-colors" title="Edit">
@@ -83,6 +118,71 @@ export function GigCard({ gig, user, onEdit, onDelete, onViewImage, onApply, onV
             </button>
           )}
         </div>
+
+        {/* Compact Share Overlay */}
+        <AnimatePresence>
+          {showShareMenu && (
+            <motion.div
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: 20 }}
+              className="absolute inset-0 bg-white/98 z-10 px-3 py-1 flex items-center justify-between gap-2"
+            >
+              <div className="flex items-center gap-1.5 overflow-x-auto py-1 scrollbar-hide flex-1">
+                <span className="text-[9px] font-bold text-gray-400 uppercase tracking-wider mr-1">Share:</span>
+                <a 
+                  href={whatsappUrl} 
+                  target="_blank" 
+                  rel="noopener noreferrer" 
+                  onClick={(e) => e.stopPropagation()} 
+                  className="px-2 py-1 bg-green-50 hover:bg-green-100 text-green-700 font-bold text-[10px] rounded-md transition-colors"
+                >
+                  WA
+                </a>
+                <a 
+                  href={facebookUrl} 
+                  target="_blank" 
+                  rel="noopener noreferrer" 
+                  onClick={(e) => e.stopPropagation()} 
+                  className="px-2 py-1 bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold text-[10px] rounded-md transition-colors"
+                >
+                  FB
+                </a>
+                <a 
+                  href={twitterUrl} 
+                  target="_blank" 
+                  rel="noopener noreferrer" 
+                  onClick={(e) => e.stopPropagation()} 
+                  className="px-2 py-1 bg-gray-100 hover:bg-gray-200 text-gray-900 font-bold text-[10px] rounded-md transition-colors"
+                >
+                  X
+                </a>
+                <a 
+                  href={linkedinUrl} 
+                  target="_blank" 
+                  rel="noopener noreferrer" 
+                  onClick={(e) => e.stopPropagation()} 
+                  className="px-2 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold text-[10px] rounded-md transition-colors"
+                >
+                  LN
+                </a>
+                <button 
+                  onClick={handleCopyLink} 
+                  className="px-2 py-1 bg-amber-50 hover:bg-amber-100 text-amber-800 font-bold text-[10px] rounded-md transition-colors flex items-center gap-1"
+                >
+                  {copied ? <Check className="w-2.5 h-2.5 text-green-600" /> : <Copy className="w-2.5 h-2.5" />}
+                  {copied ? 'Copied' : 'Link'}
+                </button>
+              </div>
+              <button 
+                onClick={(e) => { e.stopPropagation(); setShowShareMenu(false); }}
+                className="p-1 hover:bg-gray-100 rounded-full text-gray-400 hover:text-gray-600"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </motion.div>
     );
   }
@@ -91,8 +191,97 @@ export function GigCard({ gig, user, onEdit, onDelete, onViewImage, onApply, onV
     <motion.div
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
-      className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden hover:shadow-md transition-shadow duration-300 flex flex-col h-full"
+      className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden hover:shadow-md transition-shadow duration-300 flex flex-col h-full relative"
     >
+      {/* Share Overlay for Standard Card */}
+      <AnimatePresence>
+        {showShareMenu && (
+          <motion.div
+            initial={{ opacity: 0, y: 30 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 30 }}
+            className="absolute inset-0 bg-white/98 z-20 p-4 flex flex-col justify-between"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div>
+              <div className="flex justify-between items-center mb-3">
+                <h4 className="font-bold text-gray-900 text-sm flex items-center gap-1.5">
+                  <Share2 className="w-4 h-4 text-indigo-600" /> Share GiG
+                </h4>
+                <button 
+                  onClick={() => setShowShareMenu(false)}
+                  className="p-1 hover:bg-gray-100 rounded-full text-gray-400 hover:text-gray-600 transition-colors"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+              
+              <p className="text-xs text-gray-500 mb-4 line-clamp-3 bg-gray-50 p-2.5 rounded-xl border border-gray-100 font-medium">
+                "{shareText}"
+              </p>
+
+              <div className="grid grid-cols-2 gap-2">
+                <a 
+                  href={whatsappUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-2 p-2 bg-green-50 hover:bg-green-100 text-green-700 rounded-xl text-xs font-semibold transition-colors"
+                >
+                  <span className="w-2 h-2 rounded-full bg-green-500" />
+                  WhatsApp
+                </a>
+                <a 
+                  href={facebookUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-2 p-2 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-xl text-xs font-semibold transition-colors"
+                >
+                  <span className="w-2 h-2 rounded-full bg-blue-600" />
+                  Facebook
+                </a>
+                <a 
+                  href={twitterUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-2 p-2 bg-gray-50 hover:bg-gray-100 text-gray-900 rounded-xl text-xs font-semibold transition-colors"
+                >
+                  <span className="w-2 h-2 rounded-full bg-black" />
+                  Twitter / X
+                </a>
+                <a 
+                  href={linkedinUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-2 p-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-xl text-xs font-semibold transition-colors"
+                >
+                  <span className="w-2 h-2 rounded-full bg-indigo-600" />
+                  LinkedIn
+                </a>
+              </div>
+            </div>
+
+            <div className="mt-4">
+              <button
+                onClick={handleCopyLink}
+                className="w-full py-2.5 px-3 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl text-xs font-semibold transition-colors flex items-center justify-center gap-2"
+              >
+                {copied ? (
+                  <>
+                    <Check className="w-4 h-4 text-green-600 animate-bounce" />
+                    Link Copied!
+                  </>
+                ) : (
+                  <>
+                    <Copy className="w-4 h-4 text-gray-500" />
+                    Copy Share Link
+                  </>
+                )}
+              </button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Image */}
       <div className="aspect-[4/3] w-full overflow-hidden bg-gray-100 relative cursor-pointer" onClick={() => onViewImage(gig.images || [])}>
         {gig.images && gig.images.length > 0 ? (
@@ -102,6 +291,15 @@ export function GigCard({ gig, user, onEdit, onDelete, onViewImage, onApply, onV
             <Briefcase className="w-12 h-12" />
           </div>
         )}
+        
+        {/* Absolute Share Button Trigger */}
+        <button 
+          onClick={(e) => { e.stopPropagation(); setShowShareMenu(true); }}
+          className="absolute top-2.5 right-2.5 p-2 bg-white/90 backdrop-blur-xs hover:bg-white text-gray-700 hover:text-indigo-600 rounded-full shadow-sm hover:scale-105 transition-all duration-200 z-10"
+          title="Share Post"
+        >
+          <Share2 className="w-4 h-4" />
+        </button>
       </div>
 
       {/* Content */}

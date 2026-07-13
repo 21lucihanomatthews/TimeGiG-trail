@@ -66,6 +66,19 @@ export function SeekersView({ onDirectToChat, onViewProfile }: SeekersViewProps)
   }, [toastMessage]);
 
   useEffect(() => {
+    const deeplinkId = localStorage.getItem('deeplink_id');
+    const deeplinkTab = localStorage.getItem('deeplink_tab');
+    if (deeplinkId && deeplinkTab === 'seekers' && seekers.length > 0) {
+      const linkedSeeker = seekers.find(s => s.id === deeplinkId);
+      if (linkedSeeker) {
+        setSearch(linkedSeeker.title);
+        localStorage.removeItem('deeplink_id');
+        localStorage.removeItem('deeplink_tab');
+      }
+    }
+  }, [seekers]);
+
+  useEffect(() => {
     supabase.auth.getUser().then(({ data: { user } }) => setUser(user));
     if (view === 'list') {
       fetchSeekers();

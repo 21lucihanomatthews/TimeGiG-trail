@@ -80,6 +80,19 @@ export function GigsView({ onDirectToChat, onViewProfile }: GigsViewProps) {
   }, [toastMessage]);
 
   useEffect(() => {
+    const deeplinkId = localStorage.getItem('deeplink_id');
+    const deeplinkTab = localStorage.getItem('deeplink_tab');
+    if (deeplinkId && deeplinkTab === 'gigs' && gigs.length > 0) {
+      const linkedGig = gigs.find(g => g.id === deeplinkId);
+      if (linkedGig) {
+        setSearch(linkedGig.title);
+        localStorage.removeItem('deeplink_id');
+        localStorage.removeItem('deeplink_tab');
+      }
+    }
+  }, [gigs]);
+
+  useEffect(() => {
     supabase.auth.getUser().then(({ data: { user } }) => setUser(user));
     if (view === 'list') {
       fetchGigs();

@@ -113,6 +113,22 @@ export default function App() {
     return () => clearTimeout(timer);
   }, []);
 
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      const tabParam = params.get('tab') as any;
+      const idParam = params.get('id');
+      
+      if (tabParam && ['gigs', 'seekers', 'chat', 'wallet', 'referral'].includes(tabParam)) {
+        setActiveTab(tabParam);
+        if (idParam) {
+          localStorage.setItem('deeplink_id', idParam);
+          localStorage.setItem('deeplink_tab', tabParam);
+        }
+      }
+    }
+  }, []);
+
   const BackgroundPattern = () => (
     <div className="fixed inset-0 z-0 overflow-hidden pointer-events-none select-none opacity-[0.04] blur-[1.5px]">
       <div className="flex flex-wrap gap-x-16 gap-y-12 w-[150%] h-[150%] -translate-x-[20%] -translate-y-[20%] rotate-[-12deg] content-start">
